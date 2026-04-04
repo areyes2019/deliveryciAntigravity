@@ -3,6 +3,7 @@ import { ref, computed, onMounted, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import MapService from '../services/maps/MapService'
+import CreateOrderModal from '../components/CreateOrderModal.vue'
 
 const authStore = useAuthStore()
 const role = computed(() => authStore.userRole)
@@ -23,6 +24,7 @@ const drivers = ref([])
 // Map State
 const selectedOrder = ref(null)
 const viewMode = ref('map') // 'map' or 'stats' for client_admin
+const showCreateOrder = ref(false)
 
 const fetchDashboardData = async () => {
   loading.value = true
@@ -182,6 +184,9 @@ onMounted(fetchDashboardData)
                 <button class="map-pill secondary">
                     <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
                 </button>
+                <button class="map-pill generate" @click="showCreateOrder = true">
+                    <span class="icon">🚀</span> Generar Viaje
+                </button>
             </div>
 
             <!-- Side Route Detail Panel -->
@@ -241,6 +246,13 @@ onMounted(fetchDashboardData)
             </div>
         </div>
     </div>
+
+    <!-- Modal Generar Viaje -->
+    <CreateOrderModal
+        v-if="showCreateOrder"
+        @close="showCreateOrder = false"
+        @created="fetchDashboardData"
+    />
   </div>
 </template>
 
@@ -288,6 +300,12 @@ onMounted(fetchDashboardData)
 
 .map-pill.active { background: #6366F1; color: white; }
 .map-pill.secondary { background: white; color: var(--text-main); }
+.map-pill.generate {
+    background: linear-gradient(135deg, #6366F1, #8B5CF6);
+    color: white;
+    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
+}
+.map-pill.generate:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
 
 .pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse-animation 2s infinite; }
 .pulse.green { background: #4ADE80; }

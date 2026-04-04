@@ -20,6 +20,17 @@ class MapService {
     return this.provider.initialize(containerId, options);
   }
 
+  /**
+   * Solo carga el SDK sin inicializar ningún mapa.
+   * Útil para componentes que solo necesitan Places API.
+   */
+  ensureSDKLoaded() {
+    if (!this.provider) {
+      this.provider = new GoogleProvider();
+    }
+    return this.provider._loadSDK();
+  }
+
   addMarker(id, position, options = {}) {
     return this.provider.addMarker(id, position, options);
   }

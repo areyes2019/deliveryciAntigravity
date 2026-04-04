@@ -24,14 +24,22 @@ export default class GoogleProvider extends BaseProvider {
         return;
       }
 
+      // Interceptar el error de autenticación de Google Maps ANTES de cargar el script.
+      // Esto evita el alert bloqueante "Esta página no puede cargar Google Maps".
+      // Solución: agregar localhost a los referentes permitidos en Google Cloud Console.
+      window.gm_authFailure = () => {
+        console.warn('⚠️ Google Maps: Error de autenticación. Verifica las restricciones de la API Key en Google Cloud Console (agrega localhost:5173/* a los referentes permitidos).');
+        // Resolvemos de todas formas para que Places Autocomplete siga funcionando
+        if (window.google) resolve(window.google);
+      };
+
       window.__initGoogleMaps = () => {
         console.log('✅ Google Maps SDK cargado correctamente.');
         resolve(window.google);
       };
 
       const script = document.createElement('script');
-      // Usamos el formato clásico de callback para máxima compatibilidad
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry&callback=__initGoogleMaps`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places&callback=__initGoogleMaps`;
       script.async = true;
       script.defer = true;
       script.onerror = (err) => {
