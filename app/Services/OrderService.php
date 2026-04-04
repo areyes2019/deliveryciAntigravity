@@ -34,12 +34,12 @@ class OrderService
             return ['status' => false, 'message' => 'Client not found'];
         }
 
-        if ($client['credits_balance'] <= 0) {
-            return ['status' => false, 'message' => 'Insufficient credits to create order'];
+        if ($client['credits_balance'] < $client['cost_per_trip']) {
+            return ['status' => false, 'message' => 'Saldo insuficiente para crear este pedido'];
         }
 
         $distanceKm = $this->distanceService->getDistanceInKm($data['pickup_address'], $data['drop_address']);
-        $cost = $distanceKm * $client['cost_per_km'];
+        $cost = $client['cost_per_trip'];
 
         $this->db->transStart();
 

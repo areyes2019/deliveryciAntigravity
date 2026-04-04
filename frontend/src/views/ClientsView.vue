@@ -15,13 +15,13 @@ const form = ref({
   email: '',
   password: '',
   business_name: '',
-  cost_per_km: 0.5
+  cost_per_trip: 10.0
 })
 
 const fetchClients = async () => {
-  loading.ref = true
+  loading.value = true
   try {
-    const response = await api.get('/api/v1/clients')
+    const response = await api.get('/clients')
     if (response.data.status) {
       clients.value = response.data.data
     }
@@ -40,7 +40,7 @@ const openModal = (client = null) => {
       email: client.admin_email,
       password: '',
       business_name: client.business_name,
-      cost_per_km: client.cost_per_km
+      cost_per_trip: client.cost_per_trip
     }
   } else {
     editingClient.value = null
@@ -49,7 +49,7 @@ const openModal = (client = null) => {
       email: '',
       password: '',
       business_name: '',
-      cost_per_km: 0.5
+      cost_per_trip: 10.0
     }
   }
   showModal.value = true
@@ -64,9 +64,9 @@ const saveClient = async () => {
   try {
     let response
     if (editingClient.value) {
-      response = await api.put(`/api/v1/clients/${editingClient.value.id}`, form.value)
+      response = await api.put(`/clients/${editingClient.value.id}`, form.value)
     } else {
-      response = await api.post('/api/v1/clients', form.value)
+      response = await api.post('/clients', form.value)
     }
 
     if (response.data.status) {
@@ -75,15 +75,21 @@ const saveClient = async () => {
     }
   } catch (error) {
     console.error('Error saving client:', error)
-    alert(error.response?.data?.message || 'Error saving client')
+    if (error.response?.data?.errors) {
+      const errors = error.response.data.errors
+      const errorMsg = Object.values(errors).join('\n')
+      alert(`La validación falló:\n${errorMsg}`)
+    } else {
+      alert(error.response?.data?.message || 'Error al guardar el cliente')
+    }
   }
 }
 
 const deleteClient = async (id) => {
-  if (!confirm('Are you sure you want to delete this client? This will also delete the admin user.')) return
+  if (!confirm('¿Estás seguro de que deseas eliminar este cliente? Esto también eliminará al usuario administrador.')) return
   
   try {
-    const response = await api.delete(`/api/v1/clients/${id}`)
+    const response = await api.delete(`/clients/${id}`)
     if (response.data.status) {
       fetchClients()
     }
@@ -102,7 +108,7 @@ const addCredits = async () => {
   if (creditsAmount.value <= 0) return
   
   try {
-    const response = await api.post(`/api/v1/clients/${selectedClientId.value}/add-credits`, {
+    const response = await api.post(`/clients/${selectedClientId.value}/add-credits`, {
       amount: creditsAmount.value
     })
     if (response.data.status) {
@@ -120,121 +126,133 @@ onMounted(fetchClients)
 <template>
   <div class="clients-view">
     <div class="page-header">
-      <div>
-        <h1 class="text-2xl font-bold text-gray-800">Clients Management</h1>
-        <p class="text-sm text-gray-500">Manage business tenants and their credit balances.</p>
+      <div class="header-content">
+        <h1>Gestión de Clientes</h1>
+        <p>Administra las empresas y sus saldos de crédito.</p>
       </div>
       <button class="btn-primary" @click="openModal()">
-        <span class="icon">+</span> Add New Client
+        <span class="icon">+</span> Nuevo Cliente
       </button>
     </div>
 
-    <!-- Loading State -->
-    <div v-if="loading" class="flex justify-center p-12">
+    <!-- Estado de Carga -->
+    <div v-if="loading" class="loading-container">
       <div class="spinner"></div>
     </div>
 
-    <!-- Clients Table -->
-    <div v-else class="mt-8 overflow-hidden bg-white border border-gray-200 rounded-xl shadow-sm">
-      <table class="w-full text-left border-collapse">
+    <!-- Tabla de Clientes -->
+    <div v-else class="table-container">
+      <table class="custom-table">
         <thead>
-          <tr class="bg-gray-50 border-bottom">
-            <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Business Name</th>
-            <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Admin</th>
-            <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Balance</th>
-            <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Cost/KM</th>
-            <th class="px-6 py-4 text-xs font-semibold text-gray-500 uppercase">Actions</th>
+          <tr>
+            <th>Nombre de la Empresa</th>
+            <th>Administrador</th>
+            <th class="text-center">Saldo</th>
+            <th class="text-center">Precio/Viaje</th>
+            <th class="text-center">Viajes Disp.</th>
+            <th class="text-right">Acciones</th>
           </tr>
         </thead>
-        <tbody class="divide-y divide-gray-100">
-          <tr v-for="client in clients" :key="client.id" class="hover:bg-gray-50 transition-colors">
-            <td class="px-6 py-4">
-              <div class="font-semibold text-gray-900">{{ client.business_name }}</div>
-              <div class="text-xs text-gray-400">UUID: {{ client.uuid }}</div>
+        <tbody>
+          <tr v-for="client in clients" :key="client.id">
+            <td>
+              <div class="business-info">
+                <span class="business-name">{{ client.business_name }}</span>
+                <span class="uuid">UUID: {{ client.uuid }}</span>
+              </div>
             </td>
-            <td class="px-6 py-4">
-              <div class="text-sm text-gray-700">{{ client.admin_name }}</div>
-              <div class="text-xs text-gray-400">{{ client.admin_email }}</div>
+            <td>
+              <div class="admin-info">
+                <span class="admin-name">{{ client.admin_name }}</span>
+                <span class="admin-email">{{ client.admin_email }}</span>
+              </div>
             </td>
-            <td class="px-6 py-4">
-              <span class="px-2 py-1 text-xs font-bold rounded-full" :class="client.credits_balance > 0 ? 'bg-green-100 text-green-700' : 'bg-red-100 text-red-700'">
+            <td class="text-center">
+              <span class="balance-badge" :class="client.credits_balance > 0 ? 'positive' : 'empty'">
                 ${{ client.credits_balance }}
               </span>
             </td>
-            <td class="px-6 py-4 text-sm text-gray-600">${{ client.cost_per_km }}</td>
-            <td class="px-6 py-4">
-              <div class="flex gap-2">
-                <button class="btn-icon" @click="openCreditsModal(client.id)" title="Add Credits">💰</button>
-                <button class="btn-icon" @click="openModal(client)" title="Edit">✏️</button>
-                <button class="btn-icon delete" @click="deleteClient(client.id)" title="Delete">🗑️</button>
+            <td class="text-center">
+              <span class="cost-value">${{ client.cost_per_trip }}</span>
+            </td>
+            <td class="text-center">
+              <span class="trips-badge">
+                {{ Math.floor(client.credits_balance / client.cost_per_trip) }} Viajes
+              </span>
+            </td>
+            <td>
+              <div class="actions-group">
+                <button class="action-btn credit" @click="openCreditsModal(client.id)" title="Recargar Saldo">💰</button>
+                <button class="action-btn edit" @click="openModal(client)" title="Editar">✏️</button>
+                <button class="action-btn delete" @click="deleteClient(client.id)" title="Eliminar">🗑️</button>
               </div>
             </td>
           </tr>
           <tr v-if="clients.length === 0">
-            <td colspan="5" class="px-6 py-12 text-center text-gray-400">
-               No clients found. Click "Add New Client" to get started.
+            <td colspan="5" class="empty-row">
+               No hay clientes registrados. Haz clic en "Nuevo Cliente" para empezar.
             </td>
           </tr>
         </tbody>
       </table>
     </div>
 
-    <!-- Client Form Modal -->
+    <!-- Modal de Formulario de Cliente -->
     <div v-if="showModal" class="modal-overlay">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>{{ editingClient ? 'Edit Client' : 'New Client' }}</h2>
+          <h2>{{ editingClient ? 'Editar Cliente' : 'Nuevo Cliente' }}</h2>
           <button @click="closeModal" class="close-btn">&times;</button>
         </div>
         <form @submit.prevent="saveClient" class="modal-body">
           <div class="form-group">
-            <label>Business Name</label>
-            <input v-model="form.business_name" type="text" placeholder="e.g. Pizza Palace" required>
+            <label>Nombre de la Empresa</label>
+            <input v-model="form.business_name" type="text" placeholder="Ej. Pizza Palace" required>
           </div>
           <div class="form-grid">
             <div class="form-group">
-              <label>Admin Name</label>
-              <input v-model="form.name" type="text" placeholder="Full name" required>
+              <label>Nombre del Administrador</label>
+              <input v-model="form.name" type="text" placeholder="Nombre completo" required>
             </div>
             <div class="form-group">
-              <label>Email Address</label>
-              <input v-model="form.email" type="email" placeholder="admin@example.com" required>
+              <label>Correo Electrónico</label>
+              <input v-model="form.email" type="email" placeholder="admin@empresa.com" required>
             </div>
           </div>
           <div class="form-group" v-if="!editingClient">
-            <label>Password</label>
-            <input v-model="form.password" type="password" placeholder="Minimum 6 characters" required>
+            <label>Contraseña</label>
+            <input v-model="form.password" type="password" placeholder="Mínimo 6 caracteres" required>
           </div>
           <div class="form-group">
-            <label>Cost Per KM ($)</label>
-            <input v-model="form.cost_per_km" type="number" step="0.01" required>
+            <label>Precio por Viaje ($)</label>
+            <input v-model="form.cost_per_trip" type="number" step="0.01" required>
           </div>
           <div class="modal-footer">
-            <button type="button" @click="closeModal" class="btn-secondary">Cancel</button>
+            <button type="button" @click="closeModal" class="btn-secondary">Cancelar</button>
             <button type="submit" class="btn-primary">
-              {{ editingClient ? 'Update Client' : 'Create Client' }}
+              {{ editingClient ? 'Actualizar' : 'Crear Cliente' }}
             </button>
           </div>
         </form>
       </div>
     </div>
 
-    <!-- Credits Modal -->
+    <!-- Modal de Créditos -->
     <div v-if="showCreditsModal" class="modal-overlay">
       <div class="modal-content sm">
         <div class="modal-header">
-          <h2>Add Credits</h2>
+          <h2>Recargar Créditos</h2>
           <button @click="showCreditsModal = false" class="close-btn">&times;</button>
         </div>
         <div class="modal-body">
           <div class="form-group">
-            <label>Amount to Recharge ($)</label>
+            <label>Monto a Recargar ($)</label>
             <input v-model="creditsAmount" type="number" min="1" step="1" required>
           </div>
         </div>
         <div class="modal-footer">
-          <button @click="showCreditsModal = false" class="btn-secondary">Cancel</button>
-          <button @click="addCredits" class="btn-primary">Apply Recharge</button>
+          <button @click="showCreditsModal = false" class="btn-secondary">Cancelar</button>
+          <button @click="addCredits" class="btn-primary">Aplicar Recarga</button>
         </div>
       </div>
     </div>
@@ -242,44 +260,163 @@ onMounted(fetchClients)
 </template>
 
 <style scoped>
+.clients-view {
+  display: flex;
+  flex-direction: column;
+}
+
 .page-header {
   display: flex;
   justify-content: space-between;
-  align-items: flex-start;
+  align-items: center;
   margin-bottom: 2rem;
 }
 
-.btn-icon {
-  background: none;
+.header-content h1 {
+  font-size: 1.75rem;
+  font-weight: 700;
+  margin-bottom: 0.25rem;
+}
+
+.header-content p {
+  color: var(--text-muted);
+  font-size: 0.95rem;
+}
+
+/* Table Styles */
+.table-container {
+  background: white;
+  border-radius: var(--radius-lg);
   border: 1px solid var(--border-light);
-  width: 32px;
-  height: 32px;
+  box-shadow: var(--shadow-sm);
+  overflow: hidden;
+}
+
+.custom-table {
+  width: 100%;
+  border-collapse: collapse;
+  text-align: left;
+}
+
+.custom-table th {
+  background-color: #F9FAFB;
+  padding: 1rem 1.5rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  border-bottom: 1px solid var(--border-light);
+}
+
+.custom-table td {
+  padding: 1.25rem 1.5rem;
+  border-bottom: 1px solid #F3F4F6;
+  vertical-align: middle;
+}
+
+.custom-table tr:last-child td {
+  border-bottom: none;
+}
+
+.custom-table tr:hover {
+  background-color: #F9FAFB;
+}
+
+/* Cell Content Styles */
+.business-info, .admin-info {
+  display: flex;
+  flex-direction: column;
+}
+
+.business-name, .admin-name {
+  font-weight: 600;
+  color: var(--text-main);
+  font-size: 0.95rem;
+}
+
+.uuid, .admin-email {
+  font-size: 0.75rem;
+  color: var(--text-light);
+}
+
+.text-center { text-align: center; }
+.text-right { text-align: right; }
+
+.balance-badge {
+  display: inline-block;
+  padding: 0.25rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.85rem;
+  font-weight: 700;
+}
+
+.balance-badge.positive {
+  background-color: #DCFCE7;
+  color: #166534;
+}
+
+.balance-badge.empty {
+  background-color: #FEE2E2;
+  color: #991B1B;
+}
+
+.cost-value {
+  font-weight: 500;
+  color: var(--text-muted);
+}
+
+.trips-badge {
+  background-color: #EEF2FF;
+  color: #3730A3;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 0.85rem;
+}
+
+/* Actions */
+.actions-group {
+  display: flex;
+  justify-content: flex-end;
+  gap: 0.5rem;
+}
+
+.action-btn {
+  width: 36px;
+  height: 36px;
   display: flex;
   align-items: center;
   justify-content: center;
-  border-radius: 6px;
+  border-radius: 8px;
+  border: 1px solid var(--border-light);
+  background: white;
   cursor: pointer;
   transition: all 0.2s;
+  font-size: 1.1rem;
 }
 
-.btn-icon:hover {
-  background-color: var(--bg-app);
+.action-btn:hover {
+  background-color: #F3F4F6;
+  transform: translateY(-1px);
 }
 
-.btn-icon.delete:hover {
+.action-btn.delete:hover {
   background-color: #FEE2E2;
   color: #DC2626;
   border-color: #FCA5A5;
 }
 
-/* Modal Styles */
+.empty-row {
+  padding: 4rem !important;
+  text-align: center;
+  color: var(--text-light);
+}
+
+/* Modal and Forms (keep as is but ensure consistency) */
 .modal-overlay {
   position: fixed;
-  top: 0;
-  left: 0;
-  right: 0;
-  bottom: 0;
-  background-color: rgba(0, 0, 0, 0.5);
+  top: 0; left: 0; right: 0; bottom: 0;
+  background-color: rgba(0, 0, 0, 0.4);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -290,15 +427,12 @@ onMounted(fetchClients)
 .modal-content {
   background: white;
   width: 100%;
-  max-width: 600px;
-  border-radius: 12px;
-  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1);
-  overflow: hidden;
+  max-width: 550px;
+  border-radius: var(--radius-lg);
+  box-shadow: 0 25px 50px -12px rgba(0, 0, 0, 0.25);
 }
 
-.modal-content.sm {
-  max-width: 400px;
-}
+.modal-content.sm { max-width: 400px; }
 
 .modal-header {
   padding: 1.5rem;
@@ -308,30 +442,15 @@ onMounted(fetchClients)
   align-items: center;
 }
 
-.modal-header h2 {
-  font-size: 1.25rem;
-  font-weight: 700;
-  color: var(--text-main);
-}
-
-.close-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  color: var(--text-muted);
-  cursor: pointer;
-}
-
-.modal-body {
-  padding: 1.5rem;
-}
+.modal-body { padding: 1.5rem; }
 
 .modal-footer {
   padding: 1.25rem 1.5rem;
-  background-color: var(--bg-app);
+  background-color: #F9FAFB;
   display: flex;
   justify-content: flex-end;
-  gap: 1rem;
+  gap: 0.75rem;
+  border-radius: 0 0 var(--radius-lg) var(--radius-lg);
 }
 
 .form-grid {
@@ -340,15 +459,12 @@ onMounted(fetchClients)
   gap: 1rem;
 }
 
-.form-group {
-  margin-bottom: 1.25rem;
-}
+.form-group { margin-bottom: 1.25rem; }
 
 .form-group label {
   display: block;
   font-size: 0.875rem;
   font-weight: 600;
-  color: var(--text-main);
   margin-bottom: 0.5rem;
 }
 
@@ -357,20 +473,21 @@ onMounted(fetchClients)
   padding: 0.75rem;
   border: 1px solid var(--border-light);
   border-radius: 8px;
-  font-size: 0.95rem;
-  transition: border-color 0.2s;
+  outline: none;
 }
 
-.form-group input:focus {
-  outline: none;
-  border-color: var(--primary);
-  box-shadow: 0 0 0 3px rgba(34, 106, 255, 0.1);
+.form-group input:focus { border-color: var(--primary); }
+
+.loading-container {
+  display: flex;
+  justify-content: center;
+  padding: 4rem;
 }
 
 .spinner {
   width: 40px;
   height: 40px;
-  border: 4px solid #f3f3f3;
+  border: 4px solid #F3F4F6;
   border-top: 4px solid var(--primary);
   border-radius: 50%;
   animation: spin 1s linear infinite;

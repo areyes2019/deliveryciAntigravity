@@ -7,11 +7,11 @@ const authStore = useAuthStore()
 const menuItems = computed(() => {
   const role = authStore.userRole
   const items = [
-    { name: 'Dashboard', path: '/', icon: '📊', roles: ['superadmin', 'client_admin'] },
-    { name: 'Clients', path: '/clients', icon: '🏢', roles: ['superadmin'] },
-    { name: 'Drivers', path: '/drivers', icon: '🏎️', roles: ['client_admin'] },
-    { name: 'Orders', path: '/orders', icon: '📦', roles: ['client_admin'] },
-    { name: 'Reports', path: '/reports', icon: '📈', roles: ['superadmin', 'client_admin'] },
+    { name: 'Panel', path: '/', icon: '📊', roles: ['superadmin', 'client_admin'] },
+    { name: 'Clientes', path: '/clients', icon: '🏢', roles: ['superadmin'] },
+    { name: 'Conductores', path: '/drivers', icon: '🏎️', roles: ['client_admin'] },
+    { name: 'Pedidos', path: '/orders', icon: '📦', roles: ['client_admin'] },
+    { name: 'Reportes', path: '/reports', icon: '📈', roles: ['superadmin', 'client_admin'] },
   ]
   return items.filter(item => item.roles.includes(role))
 })
@@ -26,7 +26,7 @@ const menuItems = computed(() => {
       </div>
     </div>
     <div class="sidebar-menu-wrapper">
-      <p class="menu-label">Main Menu</p>
+      <p class="menu-label">Menú Principal</p>
       <ul class="nav-menu">
         <li v-for="item in menuItems" :key="item.path">
           <router-link :to="item.path" class="nav-link" active-class="active" exact>

@@ -124,3 +124,53 @@ a {
 ul {
   list-style: none;
 }
+
+/* Map & Dashboard Layout */
+.dashboard-map-container {
+  position: relative;
+  width: 100%;
+  height: calc(100vh - var(--topbar-height) - 4.5rem);
+  border-radius: 20px; /* Bordes más suaves */
+  overflow: hidden;
+  border: 1px solid rgba(0,0,0,0.05);
+  box-shadow: 0 20px 25px -5px rgba(0, 0, 0, 0.1), 0 10px 10px -5px rgba(0, 0, 0, 0.04); /* Sombra profunda */
+  background: #f8fafc;
+}
+
+#map-root {
+  width: 100%;
+  height: 100%;
+  z-index: 1;
+}
+
+/* Custom Marker Pins */
+.marker-pin {
+  width: 30px;
+  height: 30px;
+  border-radius: 50% 50% 50% 0;
+  background: var(--primary);
+  position: absolute;
+  transform: rotate(-45deg);
+  left: 50%;
+  top: 50%;
+  margin: -15px 0 0 -15px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  border: 2px solid white;
+  box-shadow: 0 4px 6px rgba(0,0,0,0.2);
+}
+
+.marker-pin span {
+  transform: rotate(45deg);
+  font-size: 14px;
+}
+
+.marker-pin.driver { background: #3B82F6; }
+.marker-pin.order { background: #10B981; }
+.marker-pin.pickup { background: #F59E0B; }
+
+.custom-div-icon {
+  background: none;
+  border: none;
+}

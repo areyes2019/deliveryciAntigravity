@@ -49,61 +49,70 @@ class ClientController extends BaseController
 
     public function create()
     {
-        $userData = $this->request->jwtPayload ?? null;
-        if (!$userData || $userData['role'] !== 'superadmin') {
-            return $this->respondUnauthorized('Access denied. SuperAdmin privileges required.');
+        try {
+            $userData = $this->request->jwtPayload ?? null;
+            if (!$userData || $userData['role'] !== 'superadmin') {
+                return $this->respondUnauthorized('Access denied. SuperAdmin privileges required.');
+            }
+
+            $input = $this->request->getPost();
+            if (empty($input)) {
+                $input = $this->request->getJSON(true);
+            }
+
+            $rules = [
+                'name'          => 'required',
+                'email'         => 'required|valid_email|is_unique[users.email]',
+                'password'      => 'required|min_length[6]',
+                'business_name' => 'required',
+                'cost_per_trip'   => 'required|numeric'
+            ];
+
+            if (!$this->validateData($input ?? [], $rules)) {
+                return $this->respondError('Validation failed', $this->validator->getErrors());
+            }
+
+            $db = Database::connect();
+            $db->transStart();
+
+            $userModel = new UserModel();
+            $userId = $userModel->insert([
+                'name'      => $input['name'],
+                'email'     => $input['email'],
+                'password'  => $input['password'],
+                'role'      => 'client_admin',
+                'is_active' => 1
+            ]);
+
+            if (!$userId) {
+                $db->transRollback();
+                return $this->respondError('Error creating user profile in database.');
+            }
+
+            $clientModel = new ClientModel();
+            $clientId = $clientModel->insert([
+                'user_id'         => $userId,
+                'business_name'   => $input['business_name'],
+                'credits_balance' => 0,
+                'cost_per_trip'     => $input['cost_per_trip']
+            ]);
+
+            if (!$clientId) {
+                $db->transRollback();
+                return $this->respondError('Error creating client profile in database.');
+            }
+
+            $db->transComplete();
+
+            if ($db->transStatus() === false) {
+                return $this->respondError('Database transaction failed.');
+            }
+
+            $clientRecord = $clientModel->find($clientId);
+            return $this->respondSuccess('Client created successfully.', $clientRecord, 201);
+        } catch (\Throwable $e) {
+            return $this->respondError('System Error: ' . $e->getMessage(), [], 500);
         }
-
-        $rules = [
-            'name'          => 'required',
-            'email'         => 'required|valid_email|is_unique[users.email]',
-            'password'      => 'required|min_length[6]',
-            'business_name' => 'required',
-            'cost_per_km'   => 'required|decimal'
-        ];
-
-        if (!$this->validate($rules)) {
-            return $this->respondError('Validation failed', $this->validator->getErrors());
-        }
-
-        $db = Database::connect();
-        $db->transStart();
-
-        $userModel = new UserModel();
-        $userId = $userModel->insert([
-            'name'      => $this->request->getVar('name'),
-            'email'     => $this->request->getVar('email'),
-            'password'  => $this->request->getVar('password'),
-            'role'      => 'client_admin',
-            'is_active' => 1
-        ]);
-
-        if (!$userId) {
-            $db->transRollback();
-            return $this->respondError('Error creating user profile.');
-        }
-
-        $clientModel = new ClientModel();
-        $clientId = $clientModel->insert([
-            'user_id'         => $userId,
-            'business_name'   => $this->request->getVar('business_name'),
-            'credits_balance' => 0,
-            'cost_per_km'     => $this->request->getVar('cost_per_km')
-        ]);
-
-        if (!$clientId) {
-            $db->transRollback();
-            return $this->respondError('Error creating client profile.');
-        }
-
-        $db->transComplete();
-
-        if ($db->transStatus() === false) {
-            return $this->respondError('Database transaction failed.');
-        }
-
-        $clientRecord = $clientModel->find($clientId);
-        return $this->respondSuccess('Client created successfully.', $clientRecord, 201);
     }
 
     public function addCredits($id = null)
@@ -148,41 +157,50 @@ class ClientController extends BaseController
 
     public function update($id = null)
     {
-        $userData = $this->request->jwtPayload ?? null;
-        if (!$userData || $userData['role'] !== 'superadmin') {
-            return $this->respondUnauthorized('Access denied. SuperAdmin privileges required.');
+        try {
+            $userData = $this->request->jwtPayload ?? null;
+            if (!$userData || $userData['role'] !== 'superadmin') {
+                return $this->respondUnauthorized('Access denied. SuperAdmin privileges required.');
+            }
+
+            $input = $this->request->getPost();
+            if (empty($input)) {
+                $input = $this->request->getJSON(true);
+            }
+
+            $clientModel = new ClientModel();
+            $client = $clientModel->find($id);
+
+            if (!$client) {
+                return $this->respondError('Client not found.', [], 404);
+            }
+
+            $rules = [
+                'business_name' => 'required',
+                'cost_per_trip'   => 'required|numeric'
+            ];
+
+            if (!$this->validateData($input ?? [], $rules)) {
+                return $this->respondError('Validation failed', $this->validator->getErrors());
+            }
+
+            $data = [
+                'business_name' => $input['business_name'],
+                'cost_per_trip'   => $input['cost_per_trip']
+            ];
+
+            $clientModel->update($id, $data);
+
+            // Also update user name if provided
+            if (isset($input['name'])) {
+                $userModel = new UserModel();
+                $userModel->update($client['user_id'], ['name' => $input['name']]);
+            }
+
+            return $this->respondSuccess('Client updated successfully.', $clientModel->find($id));
+        } catch (\Throwable $e) {
+            return $this->respondError('System Error: ' . $e->getMessage(), [], 500);
         }
-
-        $clientModel = new ClientModel();
-        $client = $clientModel->find($id);
-
-        if (!$client) {
-            return $this->respondError('Client not found.', [], 404);
-        }
-
-        $rules = [
-            'business_name' => 'required',
-            'cost_per_km'   => 'required|decimal'
-        ];
-
-        if (!$this->validate($rules)) {
-            return $this->respondError('Validation failed', $this->validator->getErrors());
-        }
-
-        $data = [
-            'business_name' => $this->request->getVar('business_name'),
-            'cost_per_km'   => $this->request->getVar('cost_per_km')
-        ];
-
-        $clientModel->update($id, $data);
-
-        // Also update user name if provided
-        if ($this->request->getVar('name')) {
-            $userModel = new UserModel();
-            $userModel->update($client['user_id'], ['name' => $this->request->getVar('name')]);
-        }
-
-        return $this->respondSuccess('Client updated successfully.', $clientModel->find($id));
     }
 
     public function delete($id = null)

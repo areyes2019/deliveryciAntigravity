@@ -12,8 +12,8 @@ class JwtLibrary
 
     public function __construct()
     {
-        $this->secretKey = getenv('encryption.key') ?: 'delivery_ci4_super_secret_key_1234567890';
-        $this->expirationHours = 24; // Validate according to environment
+        $this->secretKey = config('Encryption')->key ?: 'delivery_ci4_super_secret_key_32_chars_long_12345';
+        $this->expirationHours = 24; // Validez según entorno
     }
 
     /**

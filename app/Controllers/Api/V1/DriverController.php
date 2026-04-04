@@ -53,6 +53,11 @@ class DriverController extends BaseController
             return $this->respondUnauthorized('Access denied. Client Admin privileges required.');
         }
 
+        $input = $this->request->getPost();
+        if (empty($input)) {
+            $input = $this->request->getJSON(true);
+        }
+
         $clientModel = new ClientModel();
         $client = $clientModel->where('user_id', $userData['id'])->first();
 
@@ -68,7 +73,7 @@ class DriverController extends BaseController
             'vehicle_details' => 'required'
         ];
 
-        if (!$this->validate($rules)) {
+        if (!$this->validateData($input ?? [], $rules)) {
             return $this->respondError('Validation failed', $this->validator->getErrors());
         }
 
@@ -77,9 +82,9 @@ class DriverController extends BaseController
 
         $userModel = new UserModel();
         $userId = $userModel->insert([
-            'name'      => $this->request->getVar('name'),
-            'email'     => $this->request->getVar('email'),
-            'password'  => $this->request->getVar('password'),
+            'name'      => $input['name'],
+            'email'     => $input['email'],
+            'password'  => $input['password'],
             'role'      => 'driver',
             'is_active' => 1
         ]);
@@ -93,8 +98,8 @@ class DriverController extends BaseController
         $driverId = $driverModel->insert([
             'user_id'         => $userId,
             'client_id'       => $client['id'],
-            'phone'           => $this->request->getVar('phone'),
-            'vehicle_details' => $this->request->getVar('vehicle_details'),
+            'phone'           => $input['phone'],
+            'vehicle_details' => $input['vehicle_details'],
             'is_suspended'    => 0
         ]);
 
@@ -120,6 +125,11 @@ class DriverController extends BaseController
             return $this->respondUnauthorized('Access denied.');
         }
 
+        $input = $this->request->getPost();
+        if (empty($input)) {
+            $input = $this->request->getJSON(true);
+        }
+
         $driverModel = new DriverModel();
         $driver = $driverModel->find($id);
 
@@ -140,21 +150,23 @@ class DriverController extends BaseController
             'vehicle_details' => 'required'
         ];
 
-        if (!$this->validate($rules)) {
+        if (!$this->validateData($input ?? [], $rules)) {
             return $this->respondError('Validation failed', $this->validator->getErrors());
         }
 
         $data = [
-            'phone'           => $this->request->getVar('phone'),
-            'vehicle_details' => $this->request->getVar('vehicle_details'),
-            'is_suspended'    => $this->request->getVar('is_suspended') ?? 0
+            'phone'           => $input['phone'] ?? $driver['phone'],
+            'vehicle_details' => $input['vehicle_details'] ?? $driver['vehicle_details'],
+            'is_suspended'    => $input['is_suspended'] ?? $driver['is_suspended']
         ];
 
         $driverModel->update($id, $data);
 
         // Update user name
-        $userModel = new UserModel();
-        $userModel->update($driver['user_id'], ['name' => $this->request->getVar('name')]);
+        if (isset($input['name'])) {
+            $userModel = new UserModel();
+            $userModel->update($driver['user_id'], ['name' => $input['name']]);
+        }
 
         return $this->respondSuccess('Driver updated successfully.', $driverModel->find($id));
     }

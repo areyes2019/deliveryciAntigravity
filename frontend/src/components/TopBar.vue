@@ -7,7 +7,7 @@
     <div class="topbar-right">
       <div class="search-box">
         <span class="search-icon">🔍</span>
-        <input type="text" placeholder="Search..." class="search-input">
+        <input type="text" placeholder="Buscar..." class="search-input">
       </div>
       
       <div class="actions">
@@ -15,7 +15,7 @@
         <button class="icon-btn">🔔</button>
       </div>
 
-      <div class="user-profile" @click="handleLogout" title="Click to logout">
+      <div class="user-profile" @click="handleLogout" title="Haz clic para cerrar sesión">
         <div class="avatar">
           <img :src="avatarUrl" alt="Avatar">
         </div>
@@ -37,7 +37,7 @@ const route = useRoute()
 const authStore = useAuthStore()
 
 const title = computed(() => {
-  if (route.name === 'dashboard') return 'Dashboard'
+  if (route.name === 'dashboard') return 'Panel de Control'
   return 'Delivery Cloud'
 })
 
@@ -47,7 +47,7 @@ const avatarUrl = computed(() => {
 })
 
 const handleLogout = () => {
-    if(confirm('Are you sure you want to log out?')){
+    if(confirm('¿Estás seguro de que quieres cerrar sesión?')){
         authStore.logout()
     }
 }

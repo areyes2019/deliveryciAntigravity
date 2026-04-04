@@ -18,6 +18,34 @@ class OrderController extends BaseController
         $this->orderService = new OrderService();
     }
 
+    public function index()
+    {
+        $userData = $this->request->jwtPayload ?? null;
+
+        if (!$userData) {
+            return $this->respondUnauthorized();
+        }
+
+        $orderModel = new \App\Models\OrderModel();
+
+        if ($userData['role'] === 'superadmin') {
+            $orders = $orderModel->findAll();
+        } else if ($userData['role'] === 'client_admin') {
+            $clientModel = new ClientModel();
+            $client = $clientModel->where('user_id', $userData['id'])->first();
+
+            if (!$client) {
+                return $this->respondError('Client profile not found');
+            }
+
+            $orders = $orderModel->where('client_id', $client['id'])->findAll();
+        } else {
+            return $this->respondUnauthorized('Unauthorized access for this role.');
+        }
+
+        return $this->respondSuccess('Orders retrieved successfully', $orders);
+    }
+
     public function create()
     {
         $userData = $this->request->jwtPayload ?? null;
