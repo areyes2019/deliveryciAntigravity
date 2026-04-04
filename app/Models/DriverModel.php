@@ -1,0 +1,40 @@
+<?php
+
+namespace App\Models;
+
+use CodeIgniter\Model;
+
+class DriverModel extends Model
+{
+    protected $table            = 'drivers';
+    protected $primaryKey       = 'id';
+    protected $useAutoIncrement = true;
+    protected $returnType       = 'array';
+    protected $useSoftDeletes   = false;
+    protected $protectFields    = true;
+    protected $allowedFields    = ['uuid', 'user_id', 'client_id', 'phone', 'vehicle_details', 'is_suspended', 'current_lat', 'current_lng'];
+
+    // Dates
+    protected $useTimestamps = true;
+    protected $dateFormat    = 'datetime';
+    protected $createdField  = 'created_at';
+    protected $updatedField  = 'updated_at';
+
+    // Callbacks
+    protected $allowCallbacks = true;
+    protected $beforeInsert   = ['generateUuid'];
+
+    protected function generateUuid(array $data)
+    {
+        if (!isset($data['data']['uuid'])) {
+            $data['data']['uuid'] = sprintf( '%04x%04x-%04x-%04x-%04x-%04x%04x%04x',
+                mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ),
+                mt_rand( 0, 0xffff ),
+                mt_rand( 0, 0x0fff ) | 0x4000,
+                mt_rand( 0, 0x3fff ) | 0x8000,
+                mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff ), mt_rand( 0, 0xffff )
+            );
+        }
+        return $data;
+    }
+}
