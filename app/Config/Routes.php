@@ -14,6 +14,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     // Orders
     $routes->get('orders', 'OrderController::index', ['filter' => 'jwt:client_admin,superadmin']);
     $routes->post('orders', 'OrderController::create', ['filter' => 'jwt:client_admin']);
+    $routes->put('orders/(:num)/cancel', 'OrderController::cancel/$1', ['filter' => 'jwt:client_admin,superadmin']);
 
     // Clients (SuperAdmin only)
     $routes->get('clients', 'ClientController::index', ['filter' => 'jwt:superadmin']);

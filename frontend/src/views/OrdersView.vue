@@ -1,6 +1,7 @@
 <script setup>
 import { ref, onMounted, computed } from 'vue'
 import api from '../api'
+import CreateOrderModal from '../components/CreateOrderModal.vue'
 
 const orders = ref([])
 const loading = ref(true)
@@ -45,35 +46,24 @@ const canAffordOrder = computed(() => {
 })
 
 const openModal = () => {
-  form.value = {
-    pickup_address: '',
-    drop_address: '',
-    description: '',
-    payment_type: 'prepaid',
-    pickup_lat: (Math.random() * 0.02 + 19.4).toFixed(6), // Simulating coords
-    pickup_lng: (Math.random() * 0.02 - 99.1).toFixed(6),
-    drop_lat: (Math.random() * 0.02 + 19.4).toFixed(6),
-    drop_lng: (Math.random() * 0.02 - 99.1).toFixed(6)
-  }
   showModal.value = true
 }
 
-const saveOrder = async () => {
-  if (!canAffordOrder.value) {
-      alert('No tienes saldo suficiente para realizar este pedido.')
-      return
-  }
 
-  try {
-    const response = await api.post('/orders', form.value)
-    if (response.data.status) {
-      fetchOrders()
-      showModal.value = false
+
+const cancelOrder = async (orderId) => {
+    if (!confirm('¿Estás seguro de que deseas cancelar este pedido?')) return;
+    
+    try {
+        const response = await api.put(`/orders/${orderId}/cancel`);
+        if (response.data.status) {
+            alert('Pedido cancelado exitosamente');
+            fetchOrders();
+        }
+    } catch (error) {
+        console.error('Error cancelling order:', error);
+        alert(error.response?.data?.message || 'Error al cancelar el pedido');
     }
-  } catch (error) {
-    console.error('Error saving order:', error)
-    alert(error.response?.data?.message || 'Error al crear el pedido')
-  }
 }
 
 const getStatusBadgeClass = (status) => {
@@ -131,6 +121,7 @@ onMounted(fetchOrders)
             <th class="text-center">Estado</th>
             <th class="text-center">Costo</th>
             <th class="text-center">Fecha</th>
+            <th class="text-center">Acciones</th>
           </tr>
         </thead>
         <tbody>
@@ -160,9 +151,18 @@ onMounted(fetchOrders)
             <td class="text-center">
               <span class="order-date">{{ formatDate(order.created_at) }}</span>
             </td>
+            <td class="text-center">
+                <button 
+                    v-if="order.status === 'publicado'" 
+                    @click="cancelOrder(order.id)" 
+                    class="btn-icon btn-danger"
+                    title="Cancelar pedido">
+                    <span class="icon">✕</span> Cancelar
+                </button>
+            </td>
           </tr>
           <tr v-if="orders.length === 0">
-            <td colspan="5" class="empty-row">
+            <td colspan="6" class="empty-row">
               <div class="empty-state">
                 <span class="empty-icon">📦</span>
                 <p>No tienes pedidos registrados todavía.</p>
@@ -173,49 +173,12 @@ onMounted(fetchOrders)
       </table>
     </div>
 
-    <!-- Modal Nuevo Pedido -->
-    <div v-if="showModal" class="modal-overlay">
-      <div class="modal-content">
-        <div class="modal-header">
-          <h2>Crear Nuevo Pedido</h2>
-          <button @click="showModal = false" class="close-btn">&times;</button>
-        </div>
-        <form @submit.prevent="saveOrder" class="modal-body">
-          <div class="form-group">
-            <label>Dirección de Recogida</label>
-            <input v-model="form.pickup_address" type="text" placeholder="Ej. Calle 123, Col. Centro" required>
-          </div>
-          <div class="form-group">
-            <label>Dirección de Entrega</label>
-            <input v-model="form.drop_address" type="text" placeholder="Ej. Av. Principal #456" required>
-          </div>
-          <div class="form-group">
-            <label>Descripción del Paquete</label>
-            <textarea v-model="form.description" placeholder="Ej. 2 cajas de pizza, frágil"></textarea>
-          </div>
-          <div class="form-group">
-            <label>Tipo de Pago</label>
-            <select v-model="form.payment_type">
-                <option value="prepaid">Prepago (Desconta de Saldo)</option>
-                <option value="cash_on_delivery">Efectivo al recibir</option>
-            </select>
-          </div>
-
-          <div class="order-summary">
-              <div class="summary-item">
-                  <span>Costo del Viaje:</span>
-                  <span class="summary-cost">$ {{ tripCost }}</span>
-              </div>
-              <p class="summary-note">Este monto se descontará de tu saldo de créditos.</p>
-          </div>
-
-          <div class="modal-footer">
-            <button type="button" @click="showModal = false" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-primary" :disabled="!canAffordOrder">Publicar Pedido</button>
-          </div>
-        </form>
-      </div>
-    </div>
+    <!-- Modal Generar Viaje -->
+    <CreateOrderModal
+        v-if="showModal"
+        @close="showModal = false"
+        @created="fetchOrders"
+    />
   </div>
 </template>
 
@@ -311,38 +274,7 @@ onMounted(fetchOrders)
 .empty-state { text-align: center; padding: 4rem; color: var(--text-light); }
 .empty-icon { font-size: 3rem; display: block; margin-bottom: 1rem; }
 
-/* Modal */
-.modal-overlay {
-  position: fixed; top: 0; left: 0; right: 0; bottom: 0;
-  background: rgba(0,0,0,0.5); display: flex; align-items: center; justify-content: center; z-index: 1000;
-  backdrop-filter: blur(4px);
-}
-
-.modal-content {
-  background: white; width: 100%; max-width: 500px; padding: 2rem;
-  border-radius: var(--radius-lg); box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
-}
-
-.modal-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-.modal-header h2 { font-size: 1.25rem; font-weight: 700; }
-
-.form-group { margin-bottom: 1.25rem; }
-.form-group label { display: block; font-size: 0.85rem; font-weight: 600; margin-bottom: 0.5rem; }
-.form-group input, .form-group textarea, .form-group select {
-  width: 100%; padding: 0.75rem; border: 1px solid var(--border-light); border-radius: 8px; outline: none;
-}
-.form-group textarea { height: 80px; resize: none; }
-
-.order-summary {
-    background: #F9FAFB; border: 1px dashed #D1D5DB; padding: 1rem; border-radius: 8px; margin-bottom: 1.5rem;
-}
-.summary-item { display: flex; justify-content: space-between; font-weight: 700; margin-bottom: 0.25rem; }
-.summary-cost { color: var(--primary); font-size: 1.1rem; }
-.summary-note { font-size: 0.75rem; color: var(--text-muted); }
-
-.modal-footer { display: flex; justify-content: flex-end; gap: 1rem; margin-top: 1rem; }
-
-.text-center { text-align: center; }
+.text-center { text-align: center; } 
 
 .loading-container { display: flex; justify-content: center; padding: 4rem; }
 .spinner {
@@ -350,4 +282,30 @@ onMounted(fetchOrders)
   border-radius: 50%; animation: spin 1s linear infinite;
 }
 @keyframes spin { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.25rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 6px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  cursor: pointer;
+  border: none;
+  transition: all 0.2s ease;
+}
+
+.btn-danger {
+  background-color: #FEE2E2;
+  color: #DC2626;
+}
+
+.btn-danger:hover {
+  background-color: #FECACA;
+}
+
+.btn-danger .icon {
+  font-weight: bold;
+}
 </style>

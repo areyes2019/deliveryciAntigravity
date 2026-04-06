@@ -87,4 +87,41 @@ class OrderController extends BaseController
 
         return $this->respondError($result['message']);
     }
+
+    public function cancel($id)
+    {
+        $userData = $this->request->jwtPayload ?? null;
+        if (!$userData || ($userData['role'] !== 'client_admin' && $userData['role'] !== 'superadmin')) {
+            return $this->respondUnauthorized('Unauthorized to cancel order.');
+        }
+
+        $clientModel = new ClientModel();
+        // If it's a client admin, verify client id
+        if ($userData['role'] === 'client_admin') {
+            $client = $clientModel->where('user_id', $userData['id'])->first();
+            if (!$client) {
+                return $this->respondError('Client profile not found', [], 404);
+            }
+            $clientId = $client['id'];
+        } else {
+             // For superadmin, we might need to look up the order and get the clientId 
+             // but let's assume they shouldn't cancel directly from this endpoint or just allow it if needed. 
+             // For simplicity based on Service logic, pass the clientId of the order, 
+             // let's fetch the order first to get its client_id
+             $orderModel = new \App\Models\OrderModel();
+             $order = $orderModel->find($id);
+             if (!$order) {
+                 return $this->respondError('Order not found', [], 404);
+             }
+             $clientId = $order['client_id'];
+        }
+
+        $result = $this->orderService->cancelOrder($id, $clientId);
+
+        if ($result['status']) {
+            return $this->respondSuccess($result['message']);
+        }
+
+        return $this->respondError($result['message']);
+    }
 }

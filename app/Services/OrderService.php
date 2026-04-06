@@ -87,4 +87,47 @@ class OrderService
         $order = $this->orderModel->find($orderId);
         return ['status' => true, 'message' => 'Order created successfully', 'data' => $order];
     }
+
+    public function cancelOrder(int $orderId, int $clientId): array
+    {
+        $order = $this->orderModel->find($orderId);
+
+        if (!$order) {
+            return ['status' => false, 'message' => 'Order not found'];
+        }
+
+        if ($order['client_id'] != $clientId) {
+            return ['status' => false, 'message' => 'Unauthorized to cancel this order'];
+        }
+
+        if ($order['status'] !== 'publicado') {
+            return ['status' => false, 'message' => 'Only published orders can be cancelled'];
+        }
+
+        $this->db->transStart();
+
+        $this->orderModel->update($orderId, ['status' => 'cancelado']);
+
+        // Refund credit
+        $refunded = $this->creditService->refundCredit($clientId, $orderId, 'Refund for cancelled order');
+
+        if (!$refunded) {
+            $this->db->transRollback();
+            return ['status' => false, 'message' => 'Failed to refund credits'];
+        }
+
+        $this->statusLogModel->insert([
+            'order_id'        => $orderId,
+            'previous_status' => 'publicado',
+            'new_status'      => 'cancelado'
+        ]);
+
+        $this->db->transComplete();
+
+        if ($this->db->transStatus() === false) {
+            return ['status' => false, 'message' => 'Database transaction failed'];
+        }
+
+        return ['status' => true, 'message' => 'Order cancelled successfully'];
+    }
 }

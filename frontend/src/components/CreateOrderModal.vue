@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, onMounted, watch } from 'vue'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 
@@ -8,6 +8,12 @@ const emit = defineEmits(['close', 'created'])
 const userBalance = ref(0)
 const tripCost = ref(0)
 const submitting = ref(false)
+
+let mapInstance = null
+let pickupMarker = null
+let dropMarker = null
+let directionsService = null
+let directionsRenderer = null
 
 const form = ref({
   pickup_address: '',
@@ -102,6 +108,85 @@ const saveOrder = async () => {
   }
 }
 
+// ─── Map Updating ─────────────────────────────────────────────────────────────
+watch(
+  () => [form.value.pickup_lat, form.value.pickup_lng, form.value.drop_lat, form.value.drop_lng],
+  () => {
+    if (!mapInstance) return;
+
+    const pLat = parseFloat(form.value.pickup_lat);
+    const pLng = parseFloat(form.value.pickup_lng);
+    const dLat = parseFloat(form.value.drop_lat);
+    const dLng = parseFloat(form.value.drop_lng);
+
+    const bounds = new google.maps.LatLngBounds();
+    
+    if (pickupMarker) pickupMarker.setMap(null);
+    if (!isNaN(pLat) && !isNaN(pLng)) {
+        const pos = { lat: pLat, lng: pLng };
+        pickupMarker = new google.maps.Marker({
+            position: pos, map: mapInstance, 
+            icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+        });
+        bounds.extend(pos);
+    }
+
+    if (dropMarker) dropMarker.setMap(null);
+    if (!isNaN(dLat) && !isNaN(dLng)) {
+        const pos = { lat: dLat, lng: dLng };
+        dropMarker = new google.maps.Marker({
+            position: pos, map: mapInstance, 
+            icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+        });
+        bounds.extend(pos);
+    }
+
+    // Directions Service for Actual Route
+    if (!directionsService) {
+        directionsService = new google.maps.DirectionsService();
+        directionsRenderer = new google.maps.DirectionsRenderer({
+            map: mapInstance,
+            suppressMarkers: true,
+            preserveViewport: true,
+            polylineOptions: {
+                strokeColor: '#6366F1',
+                strokeWeight: 4
+            }
+        });
+    } else {
+        // Clear previous route
+        directionsRenderer.setDirections({routes: []});
+    }
+
+    if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+        const origin = { lat: pLat, lng: pLng };
+        const destination = { lat: dLat, lng: dLng };
+
+        directionsService.route({
+            origin: origin,
+            destination: destination,
+            travelMode: google.maps.TravelMode.DRIVING
+        }, (response, status) => {
+            if (status === 'OK') {
+                directionsRenderer.setDirections(response);
+            } else {
+                console.warn('No se pudo calcular la ruta real (' + status + ').');
+            }
+        });
+    }
+
+    if (!bounds.isEmpty()) {
+        // Delay bound fitting slightly so it handles initial loading gracefully
+        setTimeout(() => {
+            mapInstance.fitBounds(bounds, { padding: 30 });
+            if (mapInstance.getZoom() > 15) {
+                mapInstance.setZoom(15);
+            }
+        }, 50);
+    }
+  }
+)
+
 // ─── Init ─────────────────────────────────────────────────────────────────────
 onMounted(async () => {
   loadBalance()
@@ -116,6 +201,22 @@ onMounted(async () => {
     }
     if (dropInput.value) {
       attachAutocomplete(dropInput.value, 'drop_address', 'drop_lat', 'drop_lng')
+    }
+
+    // Init modal map
+    if (window.google?.maps) {
+        mapInstance = new google.maps.Map(document.getElementById('modal-map'), {
+            center: { lat: 20.5222, lng: -100.8122 },
+            zoom: 13,
+            disableDefaultUI: true,
+            zoomControl: true,
+            styles: [
+                { "elementType": "geometry", "stylers": [{ "color": "#f5f5f5" }] },
+                { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
+                { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#ffffff" }] },
+                { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#c9c9c9" }] }
+            ]
+        });
     }
   }, 100)
 })
@@ -177,6 +278,11 @@ onMounted(async () => {
                 <span v-if="form.drop_lat" class="coord-badge">✓ Ubicado</span>
               </div>
             </div>
+          </div>
+
+          <!-- Map Preview -->
+          <div class="form-group map-preview-wrapper" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
+            <div id="modal-map" style="width: 100%; height: 180px; border-radius: 12px; border: 1px solid #E5E7EB; overflow: hidden;"></div>
           </div>
 
           <!-- Description -->
@@ -321,6 +427,7 @@ onMounted(async () => {
   background: #F9FAFB; border: 1px dashed #D1D5DB;
   border-radius: 10px; padding: 1rem;
   display: flex; flex-direction: column; gap: 0.5rem;
+  margin-top: 0.5rem;
 }
 .summary-row { display: flex; justify-content: space-between; font-size: 0.9rem; }
 .summary-cost { font-weight: 700; color: #6366F1; font-size: 1rem; }
