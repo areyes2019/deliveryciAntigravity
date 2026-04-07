@@ -1,9 +1,19 @@
 <script setup>
-import { ref, computed, onMounted, nextTick } from 'vue'
+import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
+
+// --- Notification Toasts ---
+const toasts = ref([])
+const showToast = (message, type = 'success') => {
+  const id = Date.now()
+  toasts.value.push({ id, message, type })
+  setTimeout(() => {
+    toasts.value = toasts.value.filter(t => t.id !== id)
+  }, 5000)
+}
 
 const focusDriver = (driver) => {
     const lat = parseFloat(driver.current_lat);
@@ -37,6 +47,118 @@ const routeInfo = ref(null)
 const viewMode = ref('map') // 'map' or 'stats' for client_admin
 const showCreateOrder = ref(false)
 
+let refreshInterval = null
+
+// --- Real-time Logic ---
+const silentUpdate = async () => {
+    try {
+        const oldOrders = [...orders.value]
+        
+        // Fetch new data
+        const [ordersRes, driversRes] = await Promise.all([
+            api.get('/orders'),
+            api.get('/drivers')
+        ])
+
+        if (ordersRes.data.status) {
+            const newOrders = ordersRes.data.data
+            
+            // Check for status transitions (Transitions: publicado -> tomado/en_camino, or en_camino -> entregado)
+            newOrders.forEach(order => {
+                const old = oldOrders.find(o => o.id === order.id)
+                if (old && old.status !== order.status) {
+                    const driver = driversRes.data.data.find(d => String(d.id) === String(order.driver_id))
+                    
+                    if (old.status === 'publicado' && (order.status === 'tomado' || order.status === 'en_camino')) {
+                        showToast(`✅ Viaje #${order.id} aceptado por ${driver?.name || 'un conductor'}`, 'success')
+                    } else if (old.status === 'en_camino' && order.status === 'entregado') {
+                        showToast(`🏁 Viaje #${order.id} completado con éxito por ${driver?.name || 'el conductor'}`, 'success')
+                    }
+                }
+            })
+
+            orders.value = newOrders
+            stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status)).length
+        }
+
+        if (driversRes.data.status) {
+            drivers.value = driversRes.data.data
+            stats.value.totalDrivers = drivers.value.length
+            
+            // Update Markers on map silently
+            if (viewMode.value === 'map') {
+                updateMapMarkers()
+            }
+        }
+    } catch (e) {
+        console.warn('Silent update failed:', e)
+    }
+}
+
+const updateMapMarkers = () => {
+    if (viewMode.value !== 'map') return;
+
+    // 1. Update/Add Driver Markers
+    drivers.value.forEach(driver => {
+        const lat = parseFloat(driver.current_lat);
+        const lng = parseFloat(driver.current_lng);
+        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+            MapService.updateMarker(`driver-${driver.id}`, [lat, lng], {
+                icon: '🏍️',
+                className: 'driver',
+                popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
+            });
+        }
+    });
+
+    // 2. Manage Order Markers (📦)
+    const activeOrderStatuses = ['publicado', 'tomado', 'en_camino'];
+    
+    // We'll iterate through all known orders to sync the map
+    orders.value.forEach(order => {
+        const markerId = `order-${order.id}`;
+        const isActive = activeOrderStatuses.includes(order.status);
+        
+        if (isActive) {
+            const lat = parseFloat(order.pickup_lat);
+            const lng = parseFloat(order.pickup_lng);
+            if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+                // updateMarker is idempotent: adds if new, updates if exists
+                MapService.updateMarker(markerId, [lat, lng], {
+                    icon: '📦',
+                    className: 'order',
+                    popup: `<b>Pedido #${order.id}</b><br>${order.status.toUpperCase()}`
+                });
+            }
+        } else {
+            // Remove markers for finished/cancelled orders
+            MapService.removeMarker(markerId);
+            
+            // Auto-clear selection if the selected order just got finished
+            if (selectedOrder.value && selectedOrder.value.id === order.id) {
+                if (order.status === 'entregado' || order.status === 'cancelado') {
+                    clearSelection();
+                    showToast(`🏁 Viaje #${order.id} finalizado y retirado del mapa`, 'info');
+                }
+            }
+        }
+    });
+}
+
+const isDriverEnRoute = (driver) => {
+    if (!orders.value || orders.value.length === 0) return false;
+    
+    // Only consider orders from the last 12 hours
+    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
+    
+    return orders.value.some(o => {
+        const orderDate = new Date(o.created_at);
+        return String(o.driver_id) === String(driver.id) && 
+               (o.status === 'tomado' || o.status === 'en_camino') &&
+               orderDate > twelveHoursAgo;
+    })
+}
+
 const fetchDashboardData = async () => {
   loading.value = true
   console.log('🔄 Iniciando carga de datos para:', authStore.user?.email);
@@ -45,7 +167,7 @@ const fetchDashboardData = async () => {
     const ordersRes = await api.get('/orders')
     if (ordersRes.data.status) {
         orders.value = ordersRes.data.data
-        stats.value.activeOrders = orders.value.filter(o => o.status === 'publicado' || o.status === 'en_curso').length
+        stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status)).length
         console.log('📦 Pedidos recibidos:', orders.value.length);
     }
 
@@ -85,7 +207,7 @@ const redrawDrivers = () => {
         const lng = parseFloat(driver.current_lng);
         if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
             MapService.addMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: '🏎️',
+                icon: '🏍️',
                 className: 'driver',
                 popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
             })
@@ -107,7 +229,7 @@ const initDashboardMap = async () => {
     redrawDrivers()
 
     // Add active orders to map
-    const activeOrders = orders.value.filter(o => o.status === 'publicado' || o.status === 'en_curso');
+    const activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status));
     activeOrders.forEach(order => {
         const lat = parseFloat(order.pickup_lat);
         const lng = parseFloat(order.pickup_lng);
@@ -159,7 +281,7 @@ const selectOrder = async (order) => {
             const dLng = parseFloat(assignedDriver.current_lng)
             if (!isNaN(dLat) && dLat !== 0) {
                 MapService.addMarker(`driver-${assignedDriver.id}`, [dLat, dLng], {
-                    icon: '🟢🏎️',
+                    icon: '🟢🏍️',
                     popup: `<b>Asignado:</b> ${assignedDriver.name}`
                 });
             }
@@ -187,7 +309,20 @@ const clearSelection = () => {
     MapService.centerOn([20.5222, -100.8122], 13)
 }
 
-onMounted(fetchDashboardData)
+onMounted(() => {
+    fetchDashboardData()
+    
+    // Start Polling (Faster: 2s)
+    refreshInterval = setInterval(() => {
+        if (role.value === 'client_admin') {
+            silentUpdate()
+        }
+    }, 2000)
+})
+
+onUnmounted(() => {
+    if (refreshInterval) clearInterval(refreshInterval)
+})
 </script>
 
 <template>
@@ -210,7 +345,7 @@ onMounted(fetchDashboardData)
       </div>
 
       <div class="stat-card" v-if="role === 'client_admin'">
-        <div class="stat-icon drivers">🏎️</div>
+        <div class="stat-icon drivers">🏍️</div>
         <div class="stat-info">
           <p class="stat-label">Mis Conductores</p>
           <h3 class="stat-value">{{ stats.totalDrivers }}</h3>
@@ -245,7 +380,7 @@ onMounted(fetchDashboardData)
                     <span class="badge" v-if="stats.activeOrders > 0">{{ stats.activeOrders }} En espera</span>
                 </div>
                 <div class="sidebar-list" v-if="stats.activeOrders > 0">
-                    <div v-for="order in orders.filter(o => o.status === 'publicado' || o.status === 'en_curso')" 
+                    <div v-for="order in orders.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status))" 
                          :key="order.id" 
                          class="order-card"
                          @click="selectOrder(order)"
@@ -356,11 +491,13 @@ onMounted(fetchDashboardData)
                     <div class="driver-card" v-for="driver in drivers" :key="driver.id" @click="focusDriver(driver)">
                         <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
                         <div class="driver-info">
-                            <h4>{{ driver.name }}</h4>
+                            <div class="name-row">
+                                <h4>{{ driver.name }}</h4>
+                                <span class="status-pill" :class="isDriverEnRoute(driver) ? 'en-route' : 'available'">
+                                    {{ isDriverEnRoute(driver) ? 'En Ruta' : 'Libre' }}
+                                </span>
+                            </div>
                             <p>{{ driver.vehicle_details || 'Vehículo estándar' }}</p>
-                        </div>
-                        <div class="driver-status">
-                            <span class="dot green"></span>
                         </div>
                     </div>
                 </div>
@@ -369,6 +506,15 @@ onMounted(fetchDashboardData)
                 </div>
             </div>
         </div>
+    </div>
+
+    <!-- Toast Notifications -->
+    <div class="toast-container">
+        <transition-group name="toast">
+            <div v-for="toast in toasts" :key="toast.id" class="toast-message" :class="toast.type">
+                {{ toast.message }}
+            </div>
+        </transition-group>
     </div>
 
     <!-- Modal Generar Viaje -->
@@ -525,6 +671,39 @@ onMounted(fetchDashboardData)
 .slide-right-enter-from, .slide-right-leave-to { transform: translateX(50px); opacity: 0; }
 
 .full-width { width: 100%; justify-content: center; }
+
+/* Toast System */
+.toast-container {
+    position: fixed; top: 1.5rem; right: 1.5rem; 
+    z-index: 2000; display: flex; flex-direction: column; gap: 0.75rem;
+}
+.toast-message {
+    padding: 1rem 1.5rem; border-radius: 12px; background: #1F2937; color: white;
+    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); 
+    font-weight: 600; font-size: 0.9rem; min-width: 280px;
+    border-left: 5px solid #6366F1;
+    animation: slideInLeft 0.3s ease-out;
+}
+.toast-message.success { border-left-color: #10B981; }
+
+@keyframes slideInLeft {
+    from { transform: translateX(100%); opacity: 0; }
+    to { transform: translateX(0); opacity: 1; }
+}
+
+/* Driver Status Pills */
+.name-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 2px; }
+.status-pill {
+    font-size: 0.65rem; font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 20px; text-transform: uppercase;
+}
+.status-pill.available { background: #DCFCE7; color: #166534; }
+.status-pill.en-route { background: #DBEAFE; color: #1E40AF; animation: pulse-soft 2s infinite; }
+
+@keyframes pulse-soft { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+
+/* Sidebar Cards Overrides */
+.driver-card { padding: 0.75rem 1rem !important; }
+.driver-info h4 { margin: 0; font-size: 0.85rem; }
 
 @media (max-width: 900px) {
     .dashboard-map-container { flex-direction: column; }

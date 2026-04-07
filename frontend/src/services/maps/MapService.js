@@ -21,6 +21,13 @@ class MapService {
   }
 
   /**
+   * Alias for initialize (compatibility/simulator)
+   */
+  initMap(containerId, options = {}) {
+    return this.initialize(containerId, options);
+  }
+
+  /**
    * Solo carga el SDK sin inicializar ningún mapa.
    * Útil para componentes que solo necesitan Places API.
    */
@@ -35,8 +42,8 @@ class MapService {
     return this.provider.addMarker(id, position, options);
   }
 
-  updateMarker(id, position) {
-    return this.provider.updateMarker(id, position);
+  updateMarker(id, position, options = {}) {
+    return this.provider.updateMarker(id, position, options);
   }
 
   removeMarker(id) {
@@ -57,6 +64,12 @@ class MapService {
 
   centerOn(position, zoom = 13) {
     return this.provider.centerOn(position, zoom);
+  }
+
+  fitToPoints(points) {
+    if (typeof this.provider.fitToPoints === 'function') {
+      return this.provider.fitToPoints(points);
+    }
   }
 
   getNativeMap() {

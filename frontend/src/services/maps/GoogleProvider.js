@@ -96,15 +96,28 @@ export default class GoogleProvider extends BaseProvider {
     const coords = this._parsePosition(position);
     if (!coords) return null;
 
-    // Marcador ESTÁNDAR para garantizar visibilidad
+    // Remove any existing marker to prevent ghost duplicates
+    if (this.markers.has(id)) {
+        this.markers.get(id).setMap(null);
+        this.markers.delete(id);
+    }
+
+    // Custom SVG icon to display emoji without the red teardrop
+    let customIcon = null;
+    if (options.icon) {
+        // Wrap emoji in a scalable SVG text node
+        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
+        customIcon = {
+            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+            scaledSize: new google.maps.Size(48, 48),
+            anchor: new google.maps.Point(24, 24)
+        };
+    }
+
     const marker = new google.maps.Marker({
         position: coords,
         map: this.map,
-        label: options.icon ? { 
-            text: options.icon, 
-            fontSize: '18px',
-            color: 'white'
-        } : null,
+        icon: customIcon,
         title: options.popup || '',
         animation: google.maps.Animation.DROP,
         zIndex: 999
@@ -122,6 +135,27 @@ export default class GoogleProvider extends BaseProvider {
 
     this.markers.set(id, marker);
     return marker;
+  }
+
+  updateMarker(id, position, options = {}) {
+    if (!this.markers) return;
+    const marker = this.markers.get(id);
+    const coords = this._parsePosition(position);
+    if (marker && coords) {
+      marker.setPosition(coords);
+      // Optionally update the icon if provided
+      if (options.icon) {
+          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
+          marker.setIcon({
+              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+              scaledSize: new google.maps.Size(48, 48),
+              anchor: new google.maps.Point(24, 24)
+          });
+      }
+    } else if (!marker && coords) {
+      // Fallback: if marker doesn't exist, create it
+      this.addMarker(id, coords, options);
+    }
   }
 
   removeMarker(id) {
@@ -220,6 +254,16 @@ export default class GoogleProvider extends BaseProvider {
         this.map.setCenter(coords);
         if (zoom) this.map.setZoom(zoom);
     }
+  }
+
+  fitToPoints(points) {
+    if (!this.map || typeof google === 'undefined') return;
+    const bounds = new google.maps.LatLngBounds();
+    points.forEach(p => {
+        const c = this._parsePosition(p);
+        if (c) bounds.extend(c);
+    });
+    this.map.fitBounds(bounds, 50); // 50px visual padding
   }
 
   _parsePosition(pos) {

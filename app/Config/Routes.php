@@ -37,6 +37,13 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->put('drivers/(:num)', 'DriverController::update/$1', ['filter' => 'jwt:client_admin']);
     $routes->delete('drivers/(:num)', 'DriverController::delete/$1', ['filter' => 'jwt:client_admin']);
 
+    $routes->group('driver', ['filter' => 'jwt:driver'], function($routes) {
+        $routes->get('trips/available', 'Driver\DriverApiController::availableTrips');
+        $routes->post('trips/(:num)/accept', 'Driver\DriverApiController::acceptTrip/$1');
+        $routes->post('trips/(:num)/status', 'Driver\DriverApiController::updateStatus/$1');
+        $routes->post('location', 'Driver\DriverApiController::updateLocation');
+    });
+
     $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
 });
 
