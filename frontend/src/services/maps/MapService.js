@@ -43,6 +43,10 @@ class MapService {
     return this.provider.removeMarker(id);
   }
 
+  clearMarkers() {
+    return this.provider.clearMarkers();
+  }
+
   drawRoute(id, points, options = {}) {
     return this.provider.drawRoute(id, points, options);
   }

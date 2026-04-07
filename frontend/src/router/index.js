@@ -5,6 +5,7 @@ import ClientsView from '../views/ClientsView.vue'
 import DriversView from '../views/DriversView.vue'
 import OrdersView from '../views/OrdersView.vue'
 import ReportsView from '../views/ReportsView.vue'
+import PricingConfigView from '../views/PricingConfigView.vue'
 import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
@@ -45,6 +46,12 @@ const router = createRouter({
       name: 'reports',
       component: ReportsView,
       meta: { requiresAuth: true, roles: ['superadmin', 'client_admin'] }
+    },
+    {
+      path: '/pricing',
+      name: 'pricing',
+      component: PricingConfigView,
+      meta: { requiresAuth: true, roles: ['client_admin'] }
     }
   ]
 })

@@ -39,7 +39,7 @@ export default class GoogleProvider extends BaseProvider {
       };
 
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places&callback=__initGoogleMaps`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places,drawing&loading=async&callback=__initGoogleMaps`;
       script.async = true;
       script.defer = true;
       script.onerror = (err) => {
@@ -122,6 +122,15 @@ export default class GoogleProvider extends BaseProvider {
 
     this.markers.set(id, marker);
     return marker;
+  }
+
+  clearMarkers() {
+      if (this.markers) {
+          this.markers.forEach(marker => {
+              if (marker) marker.setMap(null);
+          });
+          this.markers.clear();
+      }
   }
 
   drawRoute(id, points, options = {}) {

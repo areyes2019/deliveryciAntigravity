@@ -34,12 +34,20 @@ class OrderService
             return ['status' => false, 'message' => 'Client not found'];
         }
 
-        if ($client['credits_balance'] < $client['cost_per_trip']) {
-            return ['status' => false, 'message' => 'Saldo insuficiente para crear este pedido'];
+        if ($client['credits_balance'] < 1) {
+            return ['status' => false, 'message' => 'Saldo insuficiente para crear este pedido. Necesitas al menos 1 crédito.'];
         }
 
         $distanceKm = $this->distanceService->getDistanceInKm($data['pickup_address'], $data['drop_address']);
-        $cost = $client['cost_per_trip'];
+        
+        $pricingService = new PricingService();
+        $priceResult = $pricingService->calculatePrice($clientId, (float)$data['pickup_lat'], (float)$data['pickup_lng'], (float)$data['drop_lat'], (float)$data['drop_lng'], $distanceKm);
+
+        if (!$priceResult['status']) {
+            return ['status' => false, 'message' => $priceResult['message']];
+        }
+
+        $cost = $priceResult['price'];
 
         $this->db->transStart();
 

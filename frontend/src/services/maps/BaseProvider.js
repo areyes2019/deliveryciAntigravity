@@ -26,6 +26,10 @@ export default class BaseProvider {
     throw new Error('Method "removeMarker" must be implemented');
   }
 
+  clearMarkers() {
+    throw new Error('Method "clearMarkers" must be implemented');
+  }
+
   drawRoute(id, points, options = {}) {
     throw new Error('Method "drawRoute" must be implemented');
   }

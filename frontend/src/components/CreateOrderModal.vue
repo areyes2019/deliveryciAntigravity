@@ -6,7 +6,8 @@ import MapService from '../services/maps/MapService'
 const emit = defineEmits(['close', 'created'])
 
 const userBalance = ref(0)
-const tripCost = ref(0)
+const calculatedPrice = ref(0)
+const outOfZoneError = ref('')
 const submitting = ref(false)
 
 let mapInstance = null
@@ -30,15 +31,16 @@ const form = ref({
 const pickupInput = ref(null)
 const dropInput = ref(null)
 
-const canAffordOrder = computed(() => userBalance.value >= tripCost.value)
+const canAffordOrder = computed(() => userBalance.value >= 1)
 
 // ─── Load balance ─────────────────────────────────────────────────────────────
 const loadBalance = async () => {
   try {
     const meRes = await api.get('/auth/me')
     if (meRes.data.status) {
-      userBalance.value = meRes.data.data.client_balance || 0
-      tripCost.value = meRes.data.data.cost_per_trip || 0
+      const totalMoney = parseFloat(meRes.data.data.client_balance) || 0;
+      const costPerTrip = parseFloat(meRes.data.data.cost_per_trip) || 1;
+      userBalance.value = costPerTrip > 0 ? Math.floor(totalMoney / costPerTrip) : totalMoney;
     }
   } catch (e) {
     console.error('Error cargando balance:', e)
@@ -90,7 +92,11 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
 // ─── Save order ───────────────────────────────────────────────────────────────
 const saveOrder = async () => {
   if (!canAffordOrder.value) {
-    alert('No tienes saldo suficiente para realizar este pedido.')
+    alert('No te quedan viajes prepagados suficientes. Necesitas recargar saldo.')
+    return
+  }
+  if (outOfZoneError.value) {
+    alert(outOfZoneError.value)
     return
   }
   submitting.value = true
@@ -139,6 +145,30 @@ watch(
             icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
         });
         bounds.extend(pos);
+    }
+
+    if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
+        // Fetch price preview
+        api.post('/calculate-price', {
+            pickup_lat: pLat, pickup_lng: pLng, 
+            drop_lat: dLat, drop_lng: dLng,
+            pickup_address: form.value.pickup_address,
+            drop_address: form.value.drop_address
+        }).then(res => {
+            if (res.data.status) {
+                calculatedPrice.value = res.data.data.price;
+                outOfZoneError.value = '';
+            }
+        }).catch(err => {
+            calculatedPrice.value = 0;
+            outOfZoneError.value = err.response?.data?.message || 'Error al calcular precio territorial.';
+            if (outOfZoneError.value.includes('cobertura')) {
+                alert(outOfZoneError.value);
+            }
+        });
+    } else {
+        calculatedPrice.value = 0;
+        outOfZoneError.value = '';
     }
 
     // Directions Service for Actual Route
@@ -245,7 +275,7 @@ onMounted(async () => {
           <!-- Balance pill -->
           <div class="balance-pill" :class="{ 'insufficient': !canAffordOrder }">
             <span class="pill-label">{{ canAffordOrder ? '✅ Saldo disponible' : '⚠️ Saldo insuficiente' }}</span>
-            <span class="pill-value">${{ userBalance }} disponibles · Costo: ${{ tripCost }}</span>
+            <span class="pill-value">{{ userBalance }} viajes prepagados disponibles</span>
           </div>
 
           <!-- Address Row -->
@@ -282,7 +312,7 @@ onMounted(async () => {
 
           <!-- Map Preview -->
           <div class="form-group map-preview-wrapper" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
-            <div id="modal-map" style="width: 100%; height: 180px; border-radius: 12px; border: 1px solid #E5E7EB; overflow: hidden;"></div>
+            <div id="modal-map" style="width: 100%; height: 260px; border-radius: 12px; border: 1px solid #E5E7EB; overflow: hidden;"></div>
           </div>
 
           <!-- Description -->
@@ -305,22 +335,23 @@ onMounted(async () => {
 
           <!-- Summary -->
           <div class="order-summary">
-            <div class="summary-row">
-              <span>Costo del Viaje</span>
-              <span class="summary-cost">${{ tripCost }}</span>
+            <div v-if="outOfZoneError" class="summary-row text-red">
+               <span>⚠️ {{ outOfZoneError }}</span>
+            </div>
+            <div v-else class="summary-row">
+              <span>Costo Estimado del Viaje</span>
+              <span class="summary-cost">${{ calculatedPrice.toFixed(2) }}</span>
             </div>
             <div class="summary-row">
-              <span>Saldo después del viaje</span>
-              <span :class="canAffordOrder ? 'text-green' : 'text-red'">
-                ${{ (userBalance - tripCost).toFixed(2) }}
-              </span>
+              <span>Viajes a descontar</span>
+              <span :class="canAffordOrder ? 'text-green' : 'text-red'">1 Viaje</span>
             </div>
           </div>
 
           <!-- Footer -->
           <div class="modal-footer">
             <button type="button" @click="$emit('close')" class="btn-cancel">Cancelar</button>
-            <button type="submit" class="btn-publish" :disabled="!canAffordOrder || submitting">
+            <button type="submit" class="btn-publish" :disabled="!canAffordOrder || submitting || !!outOfZoneError">
               <span v-if="submitting">Publicando...</span>
               <span v-else>🚀 Publicar Viaje</span>
             </button>
@@ -345,7 +376,7 @@ onMounted(async () => {
 
 .modal-content {
   background: white;
-  width: 100%; max-width: 580px;
+  width: 100%; max-width: 780px;
   border-radius: 20px;
   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
   animation: slideUp 0.25s ease;
@@ -470,7 +501,7 @@ onMounted(async () => {
 :deep(.pac-item:hover) { background: #F5F7FF !important; }
 :deep(.pac-item-query) { font-weight: 600 !important; color: #1F2937 !important; }
 
-@media (max-width: 600px) {
+@media (max-width: 800px) {
   .form-row { grid-template-columns: 1fr; }
   .modal-content { margin: 1rem; border-radius: 16px; }
   .modal-body { padding: 1.25rem; }

@@ -24,6 +24,13 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->delete('clients/(:num)', 'ClientController::delete/$1', ['filter' => 'jwt:superadmin']);
     $routes->post('clients/(:num)/add-credits', 'ClientController::addCredits/$1', ['filter' => 'jwt:superadmin']);
 
+    // Pricing Config & Zones
+    $routes->put('pricing-config', 'PricingController::updateConfig', ['filter' => 'jwt:client_admin']);
+    $routes->post('calculate-price', 'PricingController::calculatePreview', ['filter' => 'jwt:client_admin']);
+    $routes->get('zones', 'PricingController::getZones', ['filter' => 'jwt:client_admin']);
+    $routes->post('zones', 'PricingController::createZone', ['filter' => 'jwt:client_admin']);
+    $routes->delete('zones/(:num)', 'PricingController::deleteZone/$1', ['filter' => 'jwt:client_admin']);
+
     // Drivers
     $routes->get('drivers', 'DriverController::index', ['filter' => 'jwt:client_admin']);
     $routes->post('drivers', 'DriverController::create', ['filter' => 'jwt:client_admin']);

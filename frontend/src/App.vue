@@ -1,6 +1,5 @@
 <script setup>
 import { useAuthStore } from './stores/auth'
-import Sidebar from './components/Sidebar.vue'
 import TopBar from './components/TopBar.vue'
 
 const authStore = useAuthStore()
@@ -8,8 +7,6 @@ const authStore = useAuthStore()
 
 <template>
   <div id="app" :class="{ 'admin-layout': authStore.isAuthenticated }">
-    <Sidebar v-if="authStore.isAuthenticated" />
-    
     <div class="main-wrapper">
       <TopBar v-if="authStore.isAuthenticated" />
       
@@ -33,13 +30,9 @@ const authStore = useAuthStore()
   flex-direction: column;
 }
 
-.admin-layout .main-wrapper {
-  margin-left: var(--sidebar-width);
-}
-
 .content-area {
   flex: 1;
-  padding: 2rem;
+  padding: 1.5rem;
   background-color: var(--bg-app);
 }
 

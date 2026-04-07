@@ -5,6 +5,16 @@ import api from '../api'
 import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 
+const focusDriver = (driver) => {
+    const lat = parseFloat(driver.current_lat);
+    const lng = parseFloat(driver.current_lng);
+    if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+        MapService.centerOn([lat, lng], 15);
+    } else {
+        alert('Este conductor no ha reportado su ubicación aún.');
+    }
+}
+
 const authStore = useAuthStore()
 const role = computed(() => authStore.userRole)
 const userName = computed(() => authStore.user?.name || 'User')
@@ -173,62 +183,87 @@ onMounted(fetchDashboardData)
 
     <!-- MAP INTERFACE FOR CLIENT_ADMIN -->
     <div v-if="role === 'client_admin' && viewMode === 'map'" class="dashboard-map-view">
-        <div class="dashboard-map-container">
-            <div id="map-root"></div>
-            
-            <!-- Floating Navigation Overlays -->
-            <div class="map-controls-top">
-                <button class="map-pill active">
-                    <span class="dot pulse green"></span> {{ stats.activeOrders }} Viajes Activos
-                </button>
-                <button class="map-pill secondary">
-                    <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
-                </button>
-                <button class="map-pill generate" @click="showCreateOrder = true">
-                    <span class="icon">🚀</span> Generar Viaje
-                </button>
-            </div>
-
-            <!-- Side Route Detail Panel -->
-            <transition name="slide-right">
-                <div v-if="selectedOrder" class="map-detail-panel">
-                    <button class="close-panel" @click="selectedOrder = null">&times;</button>
-                    <h3>Detalles de Ruta</h3>
-                    
-                    <div class="route-visual">
-                        <div class="route-stop">
-                            <span class="dot green"></span>
-                            <div class="stop-info">
-                                <p class="label">Recogida</p>
-                                <p class="address">{{ selectedOrder.pickup_address }}</p>
-                            </div>
-                        </div>
-                        <div class="route-line"></div>
-                        <div class="route-stop">
-                            <span class="dot red"></span>
-                            <div class="stop-info">
-                                <p class="label">Entrega</p>
-                                <p class="address">{{ selectedOrder.drop_address }}</p>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="order-meta">
-                        <div class="meta-item">
-                            <span class="label">ID Pedido</span>
-                            <span class="value">#{{ selectedOrder.id }}</span>
-                        </div>
-                        <div class="meta-item">
-                            <span class="label">Estado</span>
-                            <span class="value badge">{{ selectedOrder.status.toUpperCase() }}</span>
-                        </div>
-                    </div>
-
-                    <button class="btn-primary full-width" @click="$router.push('/orders')">
-                        Ver Seguimiento Completo
+        <div class="dashboard-map-container" style="display: flex;">
+            <div class="map-area" style="flex: 1; position: relative; height: 100%;">
+                <div id="map-root"></div>
+                
+                <!-- Floating Navigation Overlays -->
+                <div class="map-controls-top">
+                    <button class="map-pill active">
+                        <span class="dot pulse green"></span> {{ stats.activeOrders }} Viajes Activos
+                    </button>
+                    <button class="map-pill secondary">
+                        <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
+                    </button>
+                    <button class="map-pill generate" @click="showCreateOrder = true">
+                        <span class="icon">🚀</span> Generar Viaje
                     </button>
                 </div>
-            </transition>
+
+                <!-- Side Route Detail Panel -->
+                <transition name="slide-right">
+                    <div v-if="selectedOrder" class="map-detail-panel">
+                        <button class="close-panel" @click="selectedOrder = null">&times;</button>
+                        <h3>Detalles de Ruta</h3>
+                        
+                        <div class="route-visual">
+                            <div class="route-stop">
+                                <span class="dot green"></span>
+                                <div class="stop-info">
+                                    <p class="label">Recogida</p>
+                                    <p class="address">{{ selectedOrder.pickup_address }}</p>
+                                </div>
+                            </div>
+                            <div class="route-line"></div>
+                            <div class="route-stop">
+                                <span class="dot red"></span>
+                                <div class="stop-info">
+                                    <p class="label">Entrega</p>
+                                    <p class="address">{{ selectedOrder.drop_address }}</p>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="order-meta">
+                            <div class="meta-item">
+                                <span class="label">ID Pedido</span>
+                                <span class="value">#{{ selectedOrder.id }}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="label">Estado</span>
+                                <span class="value badge">{{ selectedOrder.status.toUpperCase() }}</span>
+                            </div>
+                        </div>
+
+                        <button class="btn-primary full-width" @click="$router.push('/orders')">
+                            Ver Seguimiento Completo
+                        </button>
+                    </div>
+                </transition>
+            </div>
+            
+            <!-- Drivers Right Sidebar -->
+            <div class="drivers-sidebar">
+                <div class="drivers-header">
+                    <h3>Flotilla</h3>
+                    <span class="badge" v-if="drivers.length > 0">{{ drivers.length }} Activos</span>
+                </div>
+                <div class="drivers-list" v-if="drivers.length > 0">
+                    <div class="driver-card" v-for="driver in drivers" :key="driver.id" @click="focusDriver(driver)">
+                        <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
+                        <div class="driver-info">
+                            <h4>{{ driver.name }}</h4>
+                            <p>{{ driver.vehicle_details || 'Vehículo estándar' }}</p>
+                        </div>
+                        <div class="driver-status">
+                            <span class="dot green"></span>
+                        </div>
+                    </div>
+                </div>
+                <div class="drivers-empty" v-else>
+                    No hay conductores registrados.
+                </div>
+            </div>
         </div>
         
         <!-- Bottom Recent Orders (Mini) -->
@@ -306,6 +341,42 @@ onMounted(fetchDashboardData)
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
 }
 .map-pill.generate:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
+
+/* Drivers Sidebar inside Map Container */
+.drivers-sidebar {
+    width: 280px; background: white; border-left: 1px solid var(--border-light);
+    display: flex; flex-direction: column; height: 100%;
+}
+
+.drivers-header {
+    padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
+    display: flex; justify-content: space-between; align-items: center;
+}
+
+.drivers-header h3 { font-size: 1rem; font-weight: 700; margin: 0; color: #1F2937; }
+.drivers-header .badge { background: #DCFCE7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+
+.drivers-list {
+    flex: 1; overflow-y: auto; display: flex; flex-direction: column;
+}
+
+.driver-card {
+    display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.2rem;
+    border-bottom: 1px solid #F3F4F6; cursor: pointer; transition: background 0.2s;
+}
+
+.driver-card:hover { background: #F9FAFB; }
+
+.driver-avatar {
+    width: 36px; height: 36px; border-radius: 50%; background: #E0E7FF; color: #4338CA;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
+}
+
+.driver-info { flex: 1; overflow: hidden; }
+.driver-info h4 { margin: 0; font-size: 0.9rem; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.driver-info p { margin: 0; font-size: 0.75rem; color: #6B7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.drivers-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 
 .pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse-animation 2s infinite; }
 .pulse.green { background: #4ADE80; }

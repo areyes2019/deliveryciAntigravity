@@ -74,6 +74,16 @@ class Auth extends BaseController
             return $this->respondError('User not found', [], 404);
         }
 
+        if ($user['role'] === 'client_admin') {
+            $clientModel = new \App\Models\ClientModel();
+            $client = $clientModel->where('user_id', $user['id'])->first();
+            if ($client) {
+                $user['client'] = $client;
+                $user['client_balance'] = $client['credits_balance'];
+                $user['cost_per_trip'] = $client['cost_per_trip'];
+            }
+        }
+
         unset($user['id']);
         unset($user['password']);
 
