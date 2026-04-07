@@ -33,6 +33,7 @@ const drivers = ref([])
 
 // Map State
 const selectedOrder = ref(null)
+const routeInfo = ref(null)
 const viewMode = ref('map') // 'map' or 'stats' for client_admin
 const showCreateOrder = ref(false)
 
@@ -78,6 +79,20 @@ const fetchDashboardData = async () => {
   }
 }
 
+const redrawDrivers = () => {
+    drivers.value.forEach(driver => {
+        const lat = parseFloat(driver.current_lat);
+        const lng = parseFloat(driver.current_lng);
+        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
+            MapService.addMarker(`driver-${driver.id}`, [lat, lng], {
+                icon: '🏎️',
+                className: 'driver',
+                popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
+            })
+        }
+    })
+}
+
 const initDashboardMap = async () => {
     console.log('📍 Dibujando Mapa en #map-root...');
     await MapService.initialize('map-root', {
@@ -89,49 +104,87 @@ const initDashboardMap = async () => {
     MapService.clearMarkers()
 
     // Add Drivers to map
-    drivers.value.forEach(driver => {
-        const lat = parseFloat(driver.current_lat);
-        const lng = parseFloat(driver.current_lng);
-        console.log(`🔎 Marcador Conductor:${driver.name} -> [${lat}, ${lng}]`);
-        
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-            MapService.addMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: '🏎️',
-                className: 'driver',
-                popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
-            })
-            console.log(`✅ Conductor ID:${driver.id} mostrado.`);
-        }
-    })
+    redrawDrivers()
 
     // Add active orders to map
     const activeOrders = orders.value.filter(o => o.status === 'publicado' || o.status === 'en_curso');
     activeOrders.forEach(order => {
         const lat = parseFloat(order.pickup_lat);
         const lng = parseFloat(order.pickup_lng);
-        console.log(`🔎 Marcador Pedido ID:${order.id} -> [${lat}, ${lng}]`);
-
         if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
             MapService.addMarker(`order-${order.id}`, [lat, lng], {
                 icon: '📦',
                 className: 'order',
                 popup: `<b>Pedido #${order.id}</b><br>${order.pickup_address}`
             })
-            console.log(`✅ Pedido ID:${order.id} mostrado.`);
         }
     })
 }
 
-const selectOrder = (order) => {
+const selectOrder = async (order) => {
+    console.log('👁 Pedido seleccionado:', order.id, order);
     selectedOrder.value = order
-    MapService.centerOn([order.pickup_lat, order.pickup_lng], 16)
+    routeInfo.value = null
     
-    // Draw route if it's active
     MapService.clearRoutes()
-    MapService.drawRoute(`route-${order.id}`, [
-        [order.pickup_lat, order.pickup_lng],
-        [order.drop_lat, order.drop_lng]
+    MapService.removeMarker('temp-drop')
+    redrawDrivers()
+    
+    const pickupLat = parseFloat(order.pickup_lat)
+    const pickupLng = parseFloat(order.pickup_lng)
+    const dropLat   = parseFloat(order.drop_lat)
+    const dropLng   = parseFloat(order.drop_lng)
+    
+    console.log('📍 Coordenadas:', { pickupLat, pickupLng, dropLat, dropLng });
+
+    const validPickup = !isNaN(pickupLat) && !isNaN(pickupLng) && pickupLat !== 0
+    const validDrop   = !isNaN(dropLat)   && !isNaN(dropLng)   && dropLat   !== 0
+    
+    if (!validPickup || !validDrop) {
+        console.warn('⚠️ Coordenadas inválidas en el pedido', order.id);
+        return;
+    }
+    
+    // Destination marker
+    MapService.addMarker('temp-drop', [dropLat, dropLng], {
+        icon: '🏁',
+        popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
+    })
+
+    // Highlight assigned driver
+    if (order.driver_id) {
+        const assignedDriver = drivers.value.find(d => String(d.id) === String(order.driver_id));
+        if (assignedDriver) {
+            const dLat = parseFloat(assignedDriver.current_lat)
+            const dLng = parseFloat(assignedDriver.current_lng)
+            if (!isNaN(dLat) && dLat !== 0) {
+                MapService.addMarker(`driver-${assignedDriver.id}`, [dLat, dLng], {
+                    icon: '🟢🏎️',
+                    popup: `<b>Asignado:</b> ${assignedDriver.name}`
+                });
+            }
+        }
+    }
+
+    console.log('🛣️ Solicitando ruta vía Directions API...');
+    const result = await MapService.drawRoute(`route-${order.id}`, [
+        [pickupLat, pickupLng],
+        [dropLat, dropLng]
     ], { color: '#6366F1', weight: 5 })
+    
+    console.log('📡 Resultado ruta:', result);
+    if (result && result.distance) {
+        routeInfo.value = result;
+    }
+}
+
+const clearSelection = () => {
+    selectedOrder.value = null
+    routeInfo.value = null
+    MapService.clearRoutes()
+    MapService.removeMarker('temp-drop')
+    redrawDrivers()
+    MapService.centerOn([20.5222, -100.8122], 13)
 }
 
 onMounted(fetchDashboardData)
@@ -184,14 +237,41 @@ onMounted(fetchDashboardData)
     <!-- MAP INTERFACE FOR CLIENT_ADMIN -->
     <div v-if="role === 'client_admin' && viewMode === 'map'" class="dashboard-map-view">
         <div class="dashboard-map-container" style="display: flex;">
+            
+            <!-- Orders Left Sidebar -->
+            <div class="data-sidebar right-border">
+                <div class="sidebar-header">
+                    <h3>Viajes en Cola</h3>
+                    <span class="badge" v-if="stats.activeOrders > 0">{{ stats.activeOrders }} En espera</span>
+                </div>
+                <div class="sidebar-list" v-if="stats.activeOrders > 0">
+                    <div v-for="order in orders.filter(o => o.status === 'publicado' || o.status === 'en_curso')" 
+                         :key="order.id" 
+                         class="order-card"
+                         @click="selectOrder(order)"
+                         :class="{ active: selectedOrder?.id === order.id }">
+                        <div class="order-header">
+                            <span class="id">🚗 Viaje #{{ order.id }}</span>
+                            <span class="time">{{ new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
+                        </div>
+                        <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
+                        <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
+                    </div>
+                </div>
+                <div class="sidebar-empty" v-else>
+                    No hay viajes en cola por el momento.
+                </div>
+            </div>
+
+            <!-- Main Map Area -->
             <div class="map-area" style="flex: 1; position: relative; height: 100%;">
                 <div id="map-root"></div>
                 
                 <!-- Floating Navigation Overlays -->
                 <div class="map-controls-top">
-                    <button class="map-pill active">
-                        <span class="dot pulse green"></span> {{ stats.activeOrders }} Viajes Activos
-                    </button>
+                    <div class="map-pill active">
+                        <span class="dot pulse green"></span> {{ stats.activeOrders }} Viajes en Cola
+                    </div>
                     <button class="map-pill secondary">
                         <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
                     </button>
@@ -203,8 +283,8 @@ onMounted(fetchDashboardData)
                 <!-- Side Route Detail Panel -->
                 <transition name="slide-right">
                     <div v-if="selectedOrder" class="map-detail-panel">
-                        <button class="close-panel" @click="selectedOrder = null">&times;</button>
-                        <h3>Detalles de Ruta</h3>
+                        <button class="close-panel" @click="clearSelection">&times;</button>
+                        <h3>Detalles del Viaje</h3>
                         
                         <div class="route-visual">
                             <div class="route-stop">
@@ -226,12 +306,36 @@ onMounted(fetchDashboardData)
 
                         <div class="order-meta">
                             <div class="meta-item">
-                                <span class="label">ID Pedido</span>
+                                <span class="label">Viaje</span>
                                 <span class="value">#{{ selectedOrder.id }}</span>
                             </div>
                             <div class="meta-item">
                                 <span class="label">Estado</span>
                                 <span class="value badge">{{ selectedOrder.status.toUpperCase() }}</span>
+                            </div>
+                            <div class="meta-item" v-if="routeInfo">
+                                <span class="label">Distancia</span>
+                                <span class="value">{{ routeInfo.distance }}</span>
+                            </div>
+                            <div class="meta-item" v-if="routeInfo">
+                                <span class="label">Tiempo Est.</span>
+                                <span class="value">{{ routeInfo.duration }}</span>
+                            </div>
+                            <div class="meta-item">
+                                <span class="label">Envío</span>
+                                <span class="value">${{ Number(selectedOrder.cost).toFixed(2) }}</span>
+                            </div>
+                            <div class="meta-item" v-if="selectedOrder.payment_type === 'cash_full'">
+                                <span class="label">Producto</span>
+                                <span class="value">${{ Number(selectedOrder.product_amount || 0).toFixed(2) }}</span>
+                            </div>
+                            <div class="meta-item price-row" v-if="selectedOrder.payment_type !== 'prepaid'">
+                                <span class="label">💰 Total a Cobrar</span>
+                                <span class="value price-highlight">${{ Number(selectedOrder.total_to_collect).toFixed(2) }} MXN</span>
+                            </div>
+                            <div class="meta-item price-row" v-else>
+                                <span class="label">💰 Pagado (Prepaid)</span>
+                                <span class="value price-highlight">${{ Number(selectedOrder.cost).toFixed(2) }} MXN</span>
                             </div>
                         </div>
 
@@ -243,12 +347,12 @@ onMounted(fetchDashboardData)
             </div>
             
             <!-- Drivers Right Sidebar -->
-            <div class="drivers-sidebar">
-                <div class="drivers-header">
+            <div class="data-sidebar left-border">
+                <div class="sidebar-header">
                     <h3>Flotilla</h3>
                     <span class="badge" v-if="drivers.length > 0">{{ drivers.length }} Activos</span>
                 </div>
-                <div class="drivers-list" v-if="drivers.length > 0">
+                <div class="sidebar-list" v-if="drivers.length > 0">
                     <div class="driver-card" v-for="driver in drivers" :key="driver.id" @click="focusDriver(driver)">
                         <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
                         <div class="driver-info">
@@ -260,24 +364,9 @@ onMounted(fetchDashboardData)
                         </div>
                     </div>
                 </div>
-                <div class="drivers-empty" v-else>
+                <div class="sidebar-empty" v-else>
                     No hay conductores registrados.
                 </div>
-            </div>
-        </div>
-        
-        <!-- Bottom Recent Orders (Mini) -->
-        <div class="mini-orders-grid">
-            <div v-for="order in orders.filter(o => o.status === 'publicado').slice(0, 3)" 
-                 :key="order.id" 
-                 class="mini-order-card"
-                 @click="selectOrder(order)"
-                 :class="{ active: selectedOrder?.id === order.id }">
-                <div class="order-header">
-                    <span class="id">#{{ order.id }}</span>
-                    <span class="time">{{ new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
-                </div>
-                <p class="addr">{{ order.drop_address }}</p>
             </div>
         </div>
     </div>
@@ -342,41 +431,60 @@ onMounted(fetchDashboardData)
 }
 .map-pill.generate:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
 
-/* Drivers Sidebar inside Map Container */
-.drivers-sidebar {
-    width: 280px; background: white; border-left: 1px solid var(--border-light);
+/* Shared Sidebars inside Map Container */
+.data-sidebar {
+    width: 280px; background: white; 
     display: flex; flex-direction: column; height: 100%;
 }
+.data-sidebar.left-border { border-left: 1px solid var(--border-light); }
+.data-sidebar.right-border { border-right: 1px solid var(--border-light); }
 
-.drivers-header {
+.sidebar-header {
     padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
     display: flex; justify-content: space-between; align-items: center;
 }
 
-.drivers-header h3 { font-size: 1rem; font-weight: 700; margin: 0; color: #1F2937; }
-.drivers-header .badge { background: #DCFCE7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+.sidebar-header h3 { font-size: 1rem; font-weight: 700; margin: 0; color: #1F2937; }
+.sidebar-header .badge { background: #DCFCE7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
 
-.drivers-list {
+.sidebar-list {
     flex: 1; overflow-y: auto; display: flex; flex-direction: column;
 }
 
+/* Drivers specific */
 .driver-card {
     display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.2rem;
     border-bottom: 1px solid #F3F4F6; cursor: pointer; transition: background 0.2s;
 }
-
 .driver-card:hover { background: #F9FAFB; }
 
 .driver-avatar {
     width: 36px; height: 36px; border-radius: 50%; background: #E0E7FF; color: #4338CA;
     display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
+    flex-shrink: 0;
 }
 
 .driver-info { flex: 1; overflow: hidden; }
 .driver-info h4 { margin: 0; font-size: 0.9rem; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .driver-info p { margin: 0; font-size: 0.75rem; color: #6B7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
-.drivers-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
+/* Orders specific */
+.order-card {
+    background: white; padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
+    cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; gap: 0.5rem;
+}
+.order-card:hover, .order-card.active { border-left: 4px solid #6366F1; background: #F5F7FF; padding-left: calc(1.2rem - 4px); }
+.order-card .order-header { display: flex; justify-content: space-between; margin-bottom: 0.25rem; }
+.order-card .id { font-weight: 700; font-size: 0.85rem; color: #6366F1; display: flex; align-items: center; gap: 0.25rem; }
+.order-card .time { font-size: 0.75rem; color: var(--text-light); }
+.order-card .addr { 
+    margin: 0; font-size: 0.8rem; color: var(--text-muted); 
+    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
+    display: flex; align-items: center; gap: 0.35rem;
+}
+.order-card .icon { font-size: 0.7rem; }
+
+.sidebar-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 
 .pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse-animation 2s infinite; }
 .pulse.green { background: #4ADE80; }
@@ -406,17 +514,9 @@ onMounted(fetchDashboardData)
 .meta-item { display: flex; justify-content: space-between; }
 .meta-item .label { color: var(--text-muted); font-size: 0.85rem; }
 .meta-item .value { font-weight: 600; font-size: 0.85rem; }
-
-.mini-orders-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(250px, 1fr)); gap: 1rem; }
-.mini-order-card {
-    background: white; padding: 1rem; border-radius: 10px; border: 1px solid var(--border-light);
-    cursor: pointer; transition: all 0.2s;
-}
-.mini-order-card:hover, .mini-order-card.active { border-color: #6366F1; box-shadow: 0 4px 6px rgba(0,0,0,0.05); background: #F5F7FF; }
-.mini-order-card .order-header { display: flex; justify-content: space-between; margin-bottom: 0.5rem; }
-.mini-order-card .id { font-weight: 700; font-size: 0.85rem; color: #6366F1; }
-.mini-order-card .time { font-size: 0.75rem; color: var(--text-light); }
-.mini-order-card .addr { font-size: 0.8rem; color: var(--text-muted); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.meta-item .value.price-highlight { color: #059669; font-size: 1rem; font-weight: 800; }
+.meta-item .value.muted { color: #9CA3AF; font-style: italic; font-weight: 400; }
+.price-row { background: #F0FDF4; border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.25rem; }
 
 .close-panel { position: absolute; top: 1rem; right: 1rem; border: none; background: transparent; font-size: 1.5rem; cursor: pointer; color: var(--text-light); }
 
@@ -426,8 +526,11 @@ onMounted(fetchDashboardData)
 
 .full-width { width: 100%; justify-content: center; }
 
-@media (max-width: 768px) {
-    .mini-orders-grid { grid-template-columns: 1fr; }
+@media (max-width: 900px) {
+    .dashboard-map-container { flex-direction: column; }
+    .data-sidebar { width: 100%; height: 300px; }
+    .data-sidebar.left-border, .data-sidebar.right-border { border: none; border-bottom: 1px solid var(--border-light); }
+    .map-area { min-height: 400px; }
     .map-detail-panel { width: calc(100% - 3rem); left: 1.5rem; right: 1.5rem; }
 }
 </style>

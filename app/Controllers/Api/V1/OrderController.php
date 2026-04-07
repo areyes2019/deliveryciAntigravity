@@ -53,6 +53,11 @@ class OrderController extends BaseController
             return $this->respondUnauthorized('Only clients can create orders.');
         }
 
+        $data = $this->request->getPost();
+        if (empty($data)) {
+            $data = $this->request->getJSON(true);
+        }
+
         $rules = [
             'pickup_lat'     => 'required|decimal',
             'pickup_lng'     => 'required|decimal',
@@ -63,6 +68,11 @@ class OrderController extends BaseController
             'payment_type'   => 'required|in_list[prepaid,cash_on_delivery,cash_full]'
         ];
 
+        // product_amount is required and must be > 0 only for cash_full
+        if (($data['payment_type'] ?? '') === 'cash_full') {
+            $rules['product_amount'] = 'required|decimal|greater_than[0]';
+        }
+
         if (!$this->validate($rules)) {
             return $this->respondError('Validation failed', $this->validator->getErrors());
         }
@@ -72,11 +82,6 @@ class OrderController extends BaseController
 
         if (!$client) {
             return $this->respondError('Client profile not found for the user', [], 404);
-        }
-
-        $data = $this->request->getPost();
-        if (empty($data)) {
-             $data = $this->request->getJSON(true);
         }
 
         $result = $this->orderService->createOrder($client['id'], $data);

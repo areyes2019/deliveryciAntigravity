@@ -6,6 +6,7 @@ use App\Controllers\BaseController;
 use App\Models\ClientModel;
 use App\Models\PricingZoneModel;
 use App\Services\PricingService;
+use App\Services\ZoneMatrixService;
 use App\Traits\ApiResponseTrait;
 
 class PricingController extends BaseController
@@ -97,6 +98,10 @@ class PricingController extends BaseController
 
         $zoneModel->insert($insertData);
 
+        // Rebuild pricing matrix to include all new zone combinations
+        $matrixService = new ZoneMatrixService();
+        $matrixService->rebuildMatrix($client['id']);
+
         return $this->respondSuccess('Zone created successfully');
     }
 
@@ -118,6 +123,10 @@ class PricingController extends BaseController
         }
 
         $zoneModel->delete($id);
+
+        // Rebuild matrix to remove orphaned entries for deleted zone
+        $matrixService = new ZoneMatrixService();
+        $matrixService->rebuildMatrix($client['id']);
 
         return $this->respondSuccess('Zone deleted');
     }

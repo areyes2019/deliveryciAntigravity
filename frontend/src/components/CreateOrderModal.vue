@@ -21,6 +21,7 @@ const form = ref({
   drop_address: '',
   description: '',
   payment_type: 'prepaid',
+  product_amount: null,
   pickup_lat: null,
   pickup_lng: null,
   drop_lat: null,
@@ -32,6 +33,16 @@ const pickupInput = ref(null)
 const dropInput = ref(null)
 
 const canAffordOrder = computed(() => userBalance.value >= 1)
+
+// Derived total the driver will collect at delivery
+const totalToCollect = computed(() => {
+  if (form.value.payment_type === 'prepaid') return 0
+  if (form.value.payment_type === 'cash_on_delivery') return calculatedPrice.value
+  if (form.value.payment_type === 'cash_full') {
+    return calculatedPrice.value + (parseFloat(form.value.product_amount) || 0)
+  }
+  return 0
+})
 
 // ─── Load balance ─────────────────────────────────────────────────────────────
 const loadBalance = async () => {
@@ -54,17 +65,34 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
     return
   }
 
+  // Bounding box de la Zona Metropolitana de Celaya, Gto.
+  const celayaBounds = new google.maps.LatLngBounds(
+    new google.maps.LatLng(20.42, -101.05), // SW (Comonfort / Villagrán)
+    new google.maps.LatLng(20.72, -100.60)  // NE (Apaseo el Grande)
+  )
+
   const autocomplete = new google.maps.places.Autocomplete(inputEl, {
     componentRestrictions: { country: 'mx' },
-    fields: ['formatted_address', 'geometry', 'name'],
-    types: ['address']
+    fields: ['formatted_address', 'geometry', 'name', 'place_id', 'types'],
+    types: ['geocode', 'establishment'],
+    bounds: celayaBounds,
+    strictBounds: true
   })
 
   autocomplete.addListener('place_changed', () => {
     const place = autocomplete.getPlace()
 
-    // Usar dirección formateada o el texto del input como fallback
-    const address = place.formatted_address || inputEl.value
+    // Si es un negocio, usar el nombre + dirección formateada
+    const isEstablishment = place.types?.includes('establishment') || 
+                            place.types?.includes('point_of_interest') ||
+                            place.types?.includes('food')
+    
+    let address
+    if (isEstablishment && place.name && place.formatted_address) {
+      address = `${place.name}, ${place.formatted_address}`
+    } else {
+      address = place.formatted_address || place.name || inputEl.value
+    }
     form.value[addressField] = address
 
     if (place.geometry?.location) {
@@ -270,7 +298,8 @@ onMounted(async () => {
         </div>
 
         <!-- Body -->
-        <form @submit.prevent="saveOrder" class="modal-body">
+        <form @submit.prevent="saveOrder" class="modal-form">
+          <div class="modal-body">
 
           <!-- Balance pill -->
           <div class="balance-pill" :class="{ 'insufficient': !canAffordOrder }">
@@ -326,26 +355,71 @@ onMounted(async () => {
 
           <!-- Payment type -->
           <div class="form-group">
-            <label>💳 Tipo de Pago</label>
-            <select v-model="form.payment_type">
-              <option value="prepaid">Prepago (Descuenta de Saldo)</option>
-              <option value="cash_on_delivery">Efectivo al recibir</option>
-            </select>
+            <label>💳 ¿Quién paga el envío?</label>
+            <div class="payment-cards">
+              <label class="payment-card" :class="{ active: form.payment_type === 'prepaid' }">
+                <input type="radio" v-model="form.payment_type" value="prepaid" />
+                <span class="pcard-icon">🏢</span>
+                <span class="pcard-title">Remitente</span>
+                <span class="pcard-sub">Yo pago (saldo)</span>
+              </label>
+              <label class="payment-card" :class="{ active: form.payment_type === 'cash_on_delivery' }">
+                <input type="radio" v-model="form.payment_type" value="cash_on_delivery" />
+                <span class="pcard-icon">📦</span>
+                <span class="pcard-title">Receptor</span>
+                <span class="pcard-sub">Paga solo envío</span>
+              </label>
+              <label class="payment-card" :class="{ active: form.payment_type === 'cash_full' }">
+                <input type="radio" v-model="form.payment_type" value="cash_full" />
+                <span class="pcard-icon">💰</span>
+                <span class="pcard-title">Receptor</span>
+                <span class="pcard-sub">Paga envío + producto</span>
+              </label>
+            </div>
           </div>
+
+          <!-- Product amount (only for cash_full) -->
+          <transition name="fade-down">
+            <div class="form-group" v-if="form.payment_type === 'cash_full'">
+              <label>💰 Valor del Producto <span class="required">*</span></label>
+              <div class="input-wrapper">
+                <input
+                  v-model="form.product_amount"
+                  type="number"
+                  min="0.01"
+                  step="0.01"
+                  placeholder="0.00"
+                  required
+                />
+                <span class="coord-badge" style="background:#D1FAE5;color:#065F46">MXN</span>
+              </div>
+            </div>
+          </transition>
 
           <!-- Summary -->
           <div class="order-summary">
             <div v-if="outOfZoneError" class="summary-row text-red">
                <span>⚠️ {{ outOfZoneError }}</span>
             </div>
-            <div v-else class="summary-row">
-              <span>Costo Estimado del Viaje</span>
-              <span class="summary-cost">${{ calculatedPrice.toFixed(2) }}</span>
-            </div>
-            <div class="summary-row">
-              <span>Viajes a descontar</span>
-              <span :class="canAffordOrder ? 'text-green' : 'text-red'">1 Viaje</span>
-            </div>
+            <template v-else>
+              <div class="summary-row">
+                <span>Costo del Envío</span>
+                <span class="summary-cost">${{ calculatedPrice.toFixed(2) }} MXN</span>
+              </div>
+              <div class="summary-row" v-if="form.payment_type === 'cash_full' && form.product_amount">
+                <span>Valor del Producto</span>
+                <span class="summary-cost">${{ parseFloat(form.product_amount || 0).toFixed(2) }} MXN</span>
+              </div>
+              <div class="summary-row total" v-if="form.payment_type !== 'prepaid'">
+                <span><strong>💵 Cobrar al receptor</strong></span>
+                <span class="summary-cost highlight">${{ totalToCollect.toFixed(2) }} MXN</span>
+              </div>
+              <div class="summary-row">
+                <span>Créditos a descontar</span>
+                <span :class="canAffordOrder ? 'text-green' : 'text-red'">1 Viaje</span>
+              </div>
+            </template>
+          </div>
           </div>
 
           <!-- Footer -->
@@ -381,6 +455,8 @@ onMounted(async () => {
   box-shadow: 0 25px 50px -12px rgba(0,0,0,0.25);
   animation: slideUp 0.25s ease;
   overflow: hidden;
+  display: flex; flex-direction: column;
+  max-height: 95dvh;
 }
 @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
@@ -405,7 +481,8 @@ onMounted(async () => {
 .close-btn:hover { background: rgba(255,255,255,0.35); }
 
 /* Body */
-.modal-body { padding: 1.75rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; }
+.modal-form { display: flex; flex-direction: column; flex: 1; min-height: 0; }
+.modal-body { padding: 1.75rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; overflow-y: auto; flex: 1; }
 
 .balance-pill {
   display: flex; justify-content: space-between; align-items: center;
@@ -461,13 +538,42 @@ onMounted(async () => {
   margin-top: 0.5rem;
 }
 .summary-row { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.summary-row.total { background: #EFF6FF; border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.25rem; }
 .summary-cost { font-weight: 700; color: #6366F1; font-size: 1rem; }
+.summary-cost.highlight { color: #059669; font-size: 1.05rem; }
 .text-green { color: #059669; font-weight: 700; }
 .text-red { color: #DC2626; font-weight: 700; }
+.required { color: #EF4444; }
+
+/* Payment cards */
+.payment-cards { display: grid; grid-template-columns: repeat(3, 1fr); gap: 0.75rem; }
+.payment-card {
+  display: flex; flex-direction: column; align-items: center; gap: 0.3rem;
+  padding: 0.85rem 0.5rem; border-radius: 12px;
+  border: 2px solid #E5E7EB; cursor: pointer;
+  transition: all 0.2s; text-align: center; position: relative;
+  background: white;
+}
+.payment-card input[type="radio"] { display: none; }
+.payment-card:hover { border-color: #A5B4FC; background: #F5F7FF; }
+.payment-card.active { border-color: #6366F1; background: #EEF2FF; box-shadow: 0 0 0 3px rgba(99,102,241,0.15); }
+.pcard-icon { font-size: 1.6rem; }
+.pcard-title { font-weight: 700; font-size: 0.82rem; color: #111827; }
+.pcard-sub { font-size: 0.72rem; color: #6B7280; }
+.payment-card.active .pcard-title { color: #4338CA; }
+
+/* Fade-down transition for product amount field */
+.fade-down-enter-active, .fade-down-leave-active { transition: all 0.25s ease; }
+.fade-down-enter-from, .fade-down-leave-to { opacity: 0; transform: translateY(-8px); }
 
 /* Footer */
-.modal-footer { display: flex; justify-content: flex-end; gap: 0.75rem; padding-top: 0.25rem; }
-
+.modal-footer { 
+  display: flex; justify-content: flex-end; gap: 0.75rem; 
+  padding: 1.25rem 2rem; 
+  border-top: 1px solid #F3F4F6;
+  background: white;
+  flex-shrink: 0;
+}
 .btn-cancel {
   padding: 0.7rem 1.5rem; border-radius: 10px;
   border: 1.5px solid #E5E7EB; background: white;

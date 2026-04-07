@@ -124,6 +124,15 @@ export default class GoogleProvider extends BaseProvider {
     return marker;
   }
 
+  removeMarker(id) {
+      if (!this.markers) return;
+      const marker = this.markers.get(id);
+      if (marker) {
+          marker.setMap(null);
+          this.markers.delete(id);
+      }
+  }
+
   clearMarkers() {
       if (this.markers) {
           this.markers.forEach(marker => {
@@ -133,20 +142,75 @@ export default class GoogleProvider extends BaseProvider {
       }
   }
 
+  clearRoutes() {
+      if (this.routes) {
+          this.routes.forEach(route => {
+              if (route && route.setMap) route.setMap(null);
+          });
+          this.routes.clear();
+      }
+      // Destroy and reset renderer so it gets recreated fresh on next drawRoute
+      if (this.directionsRenderer) {
+          this.directionsRenderer.setMap(null);
+          this.directionsRenderer = null;
+      }
+      this.directionsService = null;
+  }
+
   drawRoute(id, points, options = {}) {
-    if (!this.map || typeof google === 'undefined') return null;
-    const path = points.map(p => this._parsePosition(p)).filter(p => p !== null);
-    if (path.length < 2) return null;
+    return new Promise((resolve) => {
+        if (!this.map || typeof google === 'undefined') { console.warn('No map instance'); return resolve(null); }
+        const path = points.map(p => this._parsePosition(p)).filter(p => p !== null);
+        console.log('🗺️ drawRoute path:', path);
+        if (path.length < 2) { console.warn('Less than 2 valid points'); return resolve(null); }
 
-    const polyline = new google.maps.Polyline({
-        path,
-        map: this.map,
-        strokeColor: options.color || '#6366F1',
-        strokeWeight: 5
+        if (!this.directionsService) {
+            this.directionsService = new google.maps.DirectionsService();
+            this.directionsRenderer = new google.maps.DirectionsRenderer({
+                map: this.map,
+                suppressMarkers: true,
+                polylineOptions: {
+                    strokeColor: options.color || '#6366F1',
+                    strokeWeight: 5
+                }
+            });
+        }
+
+        const origin = path[0];
+        const destination = path[path.length - 1];
+        console.log('📡 Calling Directions API:', origin, '->', destination);
+
+        this.directionsService.route({
+            origin,
+            destination,
+            travelMode: google.maps.TravelMode.DRIVING
+        }, (result, status) => {
+            console.log('📬 Directions API response status:', status);
+            if (status === 'OK') {
+                this.directionsRenderer.setDirections(result);
+                if (options.fitBounds !== false) {
+                    this.map.fitBounds(result.routes[0].bounds);
+                }
+                const routeLeg = result.routes[0].legs[0];
+                this.routes.set(id, 'directions');
+                resolve({ distance: routeLeg.distance.text, duration: routeLeg.duration.text });
+            } else {
+                console.warn(`⚠️ Directions API falló (${status}). Usando polyline directo como fallback.`);
+                // Fallback: draw direct polyline
+                const polyline = new google.maps.Polyline({
+                    path, map: this.map,
+                    strokeColor: options.color || '#6366F1',
+                    strokeWeight: 5, strokeOpacity: 0.8, geodesic: true
+                });
+                this.routes.set(id, polyline);
+                // Fit both points in view
+                const bounds = new google.maps.LatLngBounds();
+                path.forEach(p => bounds.extend(p));
+                this.map.fitBounds(bounds);
+                resolve(null);
+            }
+        });
     });
-
-    this.routes.set(id, polyline);
-    return polyline;
   }
 
   centerOn(position, zoom = null) {

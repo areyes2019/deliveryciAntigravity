@@ -49,21 +49,49 @@ class OrderService
 
         $cost = $priceResult['price'];
 
+        // ── Payment responsibility calculation ────────────────────────────────
+        $paymentType = $data['payment_type'] ?? 'prepaid';
+        $productAmount  = null;
+        $totalToCollect = 0;
+
+        switch ($paymentType) {
+            case 'prepaid':
+                // Sender already paid via credits — driver collects nothing
+                $totalToCollect = 0;
+                $productAmount  = null;
+                break;
+
+            case 'cash_on_delivery':
+                // Receiver pays delivery fee in cash to driver
+                $totalToCollect = $cost;
+                $productAmount  = null;
+                break;
+
+            case 'cash_full':
+                // Receiver pays delivery fee + product value in cash
+                $productAmount  = (float)($data['product_amount'] ?? 0);
+                $totalToCollect = $cost + $productAmount;
+                break;
+        }
+
         $this->db->transStart();
 
         $orderData = [
-            'client_id'      => $clientId,
-            'pickup_lat'     => $data['pickup_lat'],
-            'pickup_lng'     => $data['pickup_lng'],
-            'pickup_address' => $data['pickup_address'],
-            'drop_lat'       => $data['drop_lat'],
-            'drop_lng'       => $data['drop_lng'],
-            'drop_address'   => $data['drop_address'],
-            'description'    => $data['description'] ?? null,
-            'status'         => 'publicado',
-            'payment_type'   => $data['payment_type'] ?? 'prepaid',
-            'cost'           => $cost,
-            'distance_km'    => $distanceKm
+            'client_id'        => $clientId,
+            'pickup_lat'       => $data['pickup_lat'],
+            'pickup_lng'       => $data['pickup_lng'],
+            'pickup_address'   => $data['pickup_address'],
+            'drop_lat'         => $data['drop_lat'],
+            'drop_lng'         => $data['drop_lng'],
+            'drop_address'     => $data['drop_address'],
+            'description'      => $data['description'] ?? null,
+            'status'           => 'publicado',
+            'payment_type'     => $paymentType,
+            'cost'             => $cost,
+            'distance_km'      => $distanceKm,
+            'product_amount'   => $productAmount,
+            'total_to_collect' => $totalToCollect,
+            'paid'             => 0,
         ];
 
         $orderId = $this->orderModel->insert($orderData);
