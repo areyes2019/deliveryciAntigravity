@@ -111,28 +111,41 @@ const updateMapMarkers = () => {
         }
     });
 
-    // 2. Manage Order Markers (📦)
+    // 2. Manage Order Markers
     const activeOrderStatuses = ['publicado', 'tomado', 'en_camino'];
     
     // We'll iterate through all known orders to sync the map
     orders.value.forEach(order => {
         const markerId = `order-${order.id}`;
+        const dropMarkerId = `order-drop-${order.id}`;
         const isActive = activeOrderStatuses.includes(order.status);
         
         if (isActive) {
             const lat = parseFloat(order.pickup_lat);
             const lng = parseFloat(order.pickup_lng);
+            const dropLat = parseFloat(order.drop_lat);
+            const dropLng = parseFloat(order.drop_lng);
+            
             if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
                 // updateMarker is idempotent: adds if new, updates if exists
                 MapService.updateMarker(markerId, [lat, lng], {
-                    icon: '📦',
+                    icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
                     className: 'order',
                     popup: `<b>Pedido #${order.id}</b><br>${order.status.toUpperCase()}`
+                });
+            }
+            
+            if (!isNaN(dropLat) && !isNaN(dropLng) && dropLat !== 0) {
+                MapService.updateMarker(dropMarkerId, [dropLat, dropLng], {
+                    icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png',
+                    className: 'order-drop',
+                    popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
                 });
             }
         } else {
             // Remove markers for finished/cancelled orders
             MapService.removeMarker(markerId);
+            MapService.removeMarker(dropMarkerId);
             
             // Auto-clear selection if the selected order just got finished
             if (selectedOrder.value && selectedOrder.value.id === order.id) {
@@ -231,13 +244,24 @@ const initDashboardMap = async () => {
     // Add active orders to map
     const activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status));
     activeOrders.forEach(order => {
-        const lat = parseFloat(order.pickup_lat);
-        const lng = parseFloat(order.pickup_lng);
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-            MapService.addMarker(`order-${order.id}`, [lat, lng], {
-                icon: '📦',
+        const pickupLat = parseFloat(order.pickup_lat);
+        const pickupLng = parseFloat(order.pickup_lng);
+        const dropLat = parseFloat(order.drop_lat);
+        const dropLng = parseFloat(order.drop_lng);
+        
+        if (!isNaN(pickupLat) && !isNaN(pickupLng) && pickupLat !== 0) {
+            MapService.addMarker(`order-${order.id}`, [pickupLat, pickupLng], {
+                icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
                 className: 'order',
                 popup: `<b>Pedido #${order.id}</b><br>${order.pickup_address}`
+            })
+        }
+        
+        if (!isNaN(dropLat) && !isNaN(dropLng) && dropLat !== 0) {
+            MapService.addMarker(`order-drop-${order.id}`, [dropLat, dropLng], {
+                icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png',
+                className: 'order-drop',
+                popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
             })
         }
     })
@@ -267,12 +291,6 @@ const selectOrder = async (order) => {
         return;
     }
     
-    // Destination marker
-    MapService.addMarker('temp-drop', [dropLat, dropLng], {
-        icon: '🏁',
-        popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
-    })
-
     // Highlight assigned driver
     if (order.driver_id) {
         const assignedDriver = drivers.value.find(d => String(d.id) === String(order.driver_id));
@@ -304,7 +322,6 @@ const clearSelection = () => {
     selectedOrder.value = null
     routeInfo.value = null
     MapService.clearRoutes()
-    MapService.removeMarker('temp-drop')
     redrawDrivers()
     MapService.centerOn([20.5222, -100.8122], 13)
 }

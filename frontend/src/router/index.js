@@ -7,6 +7,7 @@ import OrdersView from '../views/OrdersView.vue'
 import ReportsView from '../views/ReportsView.vue'
 import PricingConfigView from '../views/PricingConfigView.vue'
 import DriverSimulatorView from '../views/DriverSimulatorView.vue'
+import DriverAppView from '../views/DriverAppView.vue'
 import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
@@ -28,6 +29,12 @@ const router = createRouter({
       path: '/simulator',
       name: 'simulator',
       component: DriverSimulatorView,
+      meta: { requiresAuth: true, roles: ['driver'] }
+    },
+    {
+      path: '/driver',
+      name: 'driver-app',
+      component: DriverAppView,
       meta: { requiresAuth: true, roles: ['driver'] }
     },
     {
@@ -72,19 +79,19 @@ router.beforeEach((to, from, next) => {
     next('/login')
   } else if (to.meta.requiresGuest && isAuthenticated) {
     if (userRole === 'driver') {
-      next('/simulator')
+      next('/driver')
     } else {
       next('/')
     }
   } else if (to.meta.roles && !to.meta.roles.includes(userRole)) {
     // Role not authorized, redirect based on role
     if (userRole === 'driver') {
-      next('/simulator')
+      next('/driver')
     } else {
       next('/')
     }
   } else if (to.path === '/' && userRole === 'driver') {
-    next('/simulator')
+    next('/driver')
   } else {
     next()
   }

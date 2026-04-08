@@ -2,16 +2,15 @@
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import MapService from '../services/maps/MapService'
 import api from '../api'
-import { useAuthStore } from '../stores/auth'
 
 // --- State ---
-const authStore = useAuthStore()
 const availableOrders = ref([])
 const activeOrder = ref(null)
 const isLoading = ref(false)
 const mapLoading = ref(true)
 
-// Simulation State
+// Simulation & Real Mode State
+const isSimulatorMode = ref(false) // <--- MODE TOGGLE
 const tripPhase = ref('to_pickup') // 'to_pickup' | 'to_dropoff'
 const isSimulating = ref(false)
 const isSidebarCollapsed = ref(false)
@@ -19,10 +18,10 @@ const currentPos = ref(null)
 const speedKmh = ref(60) // Default 60km/h
 const routePoints = ref([])
 const currentIndex = ref(0)
-const totalDistance = ref(0)
 const progress = ref(0)
 let simInterval = null
 let pollInterval = null
+let locationWatchId = null
 let lastSyncTime = 0
 
 // --- Computed ---
@@ -92,12 +91,12 @@ const loadRoute = async () => {
     let origin, destination;
     
     // Origin fallback if driver GPS isn't set
-    const SIM_START_LAT = 20.5222;
-    const SIM_START_LNG = -100.8122;
+    const FALLBACK_LAT = 20.5222;
+    const FALLBACK_LNG = -100.8122;
 
     if (activeOrder.value.status === 'tomado') {
         tripPhase.value = 'to_pickup';
-        origin = currentPos.value || { lat: SIM_START_LAT, lng: SIM_START_LNG };
+        origin = currentPos.value || { lat: FALLBACK_LAT, lng: FALLBACK_LNG };
         destination = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
     } else {
         tripPhase.value = 'to_dropoff';
@@ -105,8 +104,6 @@ const loadRoute = async () => {
         destination = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) };
     }
 
-    // Use Google Directions directly through MapService if available, or fetch manually
-    // For the simulator, we'll use the native Google Maps logic
     const directionsService = new google.maps.DirectionsService()
     
     directionsService.route({
@@ -115,7 +112,6 @@ const loadRoute = async () => {
         travelMode: google.maps.TravelMode.DRIVING
     }, (result, status) => {
         if (status === 'OK') {
-            // Extract points from the path for simulation
             const path = result.routes[0].overview_path
             routePoints.value = path.map(p => ({ lat: p.lat(), lng: p.lng() }))
         } else {
@@ -123,36 +119,85 @@ const loadRoute = async () => {
             routePoints.value = [origin, destination];
         }
 
-        currentIndex.value = 0
-        currentPos.value = routePoints.value[0]
+        if (isSimulatorMode.value) {
+            currentIndex.value = 0
+            currentPos.value = routePoints.value[0]
+        }
 
-        // Draw the route - but tell Google Maps NOT to aggressively zoom in immediately
-        MapService.drawRoute('sim-route', routePoints.value, { fitBounds: false })
+        // Draw the route
+        MapService.drawRoute('app-route', routePoints.value, { fitBounds: false })
         
         // Draw static targets
         const pickupCoords = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
         const dropoffCoords = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) };
-        MapService.updateMarker('sim-pickup', pickupCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png', popup: `<b>Origen:</b><br>${activeOrder.value.pickup_address}` });
-        MapService.updateMarker('sim-dropoff', dropoffCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png', popup: `<b>Destino:</b><br>${activeOrder.value.drop_address}` });
-
-        // Set initial marker
-        MapService.updateMarker('sim-driver', currentPos.value, { icon: '🏍️' })
         
-        // Global framing: Ensure Driver, Pickup AND Dropoff are strictly inside the camera viewport at all times
-        MapService.fitToPoints([currentPos.value, pickupCoords, dropoffCoords])
+        // Important Map Bug Fix: Ensure drop_lat and drop_lng exist and are valid numbers before placing marker
+        if (!isNaN(pickupCoords.lat) && !isNaN(pickupCoords.lng)) {
+            MapService.updateMarker('app-pickup', pickupCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png', popup: `<b>Origen:</b><br>${activeOrder.value.pickup_address}` });
+        }
+        
+        if (!isNaN(dropoffCoords.lat) && !isNaN(dropoffCoords.lng)) {
+            console.log("Setting Dropoff Marker at", dropoffCoords);
+            // Delay slightly to ensure directionsRenderer doesn't overwrite it contextually
+            setTimeout(() => {
+                MapService.updateMarker('app-dropoff', dropoffCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png', popup: `<b>Destino:</b><br>${activeOrder.value.drop_address}` });
+            }, 100);
+        }
 
-        // Sync initial phase location directly to DB
+        if (currentPos.value) {
+            MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
+            MapService.fitToPoints([currentPos.value, pickupCoords, dropoffCoords].filter(p => !isNaN(p.lat)))
+        }
+
         syncLocation()
 
-        // AUTO START SIMULATION
-        startSimulation()
+        if (isSimulatorMode.value) {
+            startSimulation()
+        }
     })
 }
 
-// --- Simulation Engine ---
+// --- Real GPS Tracking ---
+
+const startRealTracking = () => {
+    if (!('geolocation' in navigator)) {
+        console.warn('Geolocation is not supported by this browser.')
+        return
+    }
+
+    locationWatchId = navigator.geolocation.watchPosition(
+        (position) => {
+            const newPos = {
+                lat: position.coords.latitude,
+                lng: position.coords.longitude
+            };
+            currentPos.value = newPos;
+            
+            // Render driver position
+            MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' });
+            
+            // Sync to backend periodically or on every change
+            const now = Date.now();
+            if (now - lastSyncTime > 2000) { // Throttle sync to every 2 seconds
+                syncLocation();
+                lastSyncTime = now;
+            }
+        },
+        (error) => {
+            console.error('Error watching location:', error);
+        },
+        {
+            enableHighAccuracy: true,
+            maximumAge: 0,
+            timeout: 5000
+        }
+    );
+};
+
+// --- Simulator Tracking ---
 
 const startSimulation = () => {
-    if (isSimulating.value) return
+    if (!isSimulatorMode.value || isSimulating.value) return
     isSimulating.value = true
     
     // Smooth interpolation logic
@@ -163,16 +208,11 @@ const startSimulation = () => {
             return
         }
 
-        const p1 = routePoints.value[currentIndex.value]
-        const p2 = routePoints.value[currentIndex.value + 1]
-
-        // For now, simpler point-to-point step
-        // In a real simulator we'd interpolate based on speed, but let's do constant step for clarity
         currentIndex.value++
         currentPos.value = routePoints.value[currentIndex.value]
         
         // Update Marker
-        MapService.updateMarker('sim-driver', currentPos.value)
+        MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
         
         // Polling sync to backend (throttle to avoid flooding)
         const now = Date.now()
@@ -184,9 +224,6 @@ const startSimulation = () => {
         progress.value = Math.round((currentIndex.value / (routePoints.value.length - 1)) * 100)
     }
 
-    // Interval based on speed
-    // 60km/h = 1000m/min = 16m/s
-    // Lower speed = longer interval
     const intervalMs = Math.max(100, 1000 - (speedKmh.value * 8))
     simInterval = setInterval(moveStep, intervalMs)
 }
@@ -225,37 +262,55 @@ onMounted(async () => {
     
     // Init Map
     await MapService.ensureSDKLoaded()
-    MapService.initialize('sim-map-root', {
+    MapService.initialize('app-map-root', {
         center: [20.5222, -100.8122],
         zoom: 13
     }).then(() => {
         mapLoading.value = false
+        // Start watching real position immediately if not simulating
+        if (!isSimulatorMode.value) {
+            startRealTracking()
+        }
     }).catch(() => {
-        // Fallback for loader
         mapLoading.value = false
     })
 
-    // Safety timeout for loading screen
     setTimeout(() => { mapLoading.value = false }, 5000)
 })
 
 onUnmounted(() => {
     if (simInterval) clearInterval(simInterval)
     if (pollInterval) clearInterval(pollInterval)
+    if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId)
 })
+
+const toggleSimulatorMode = () => {
+    isSimulatorMode.value = !isSimulatorMode.value;
+    if (isSimulatorMode.value) {
+        if (locationWatchId) {
+            navigator.geolocation.clearWatch(locationWatchId);
+            locationWatchId = null;
+        }
+        if (activeOrder.value) startSimulation();
+    } else {
+        stopSimulation();
+        startRealTracking();
+    }
+}
 </script>
 
 <template>
-  <div class="mobile-simulator-theme">
-    <!-- Main App Container (Simulating a Phone) -->
+  <div class="mobile-app-theme">
+    <!-- Main App Container (Simulating a Phone / PWA Standalone container) -->
     <div class="app-frame">
       
       <!-- Top Bar -->
       <header class="app-header">
         <button class="back-btn">←</button>
-        <h1>Nuevas Solicitudes</h1>
-        <div class="notif-bell">
-          🔔<span class="dot"></span>
+        <h1>Modo Conductor</h1>
+        <div class="notif-bell" @click="toggleSimulatorMode" title="Toggle Simulator Mode">
+          <span v-if="isSimulatorMode">🎮</span>
+          <span v-else>📍</span>
         </div>
       </header>
 
@@ -285,7 +340,7 @@ onUnmounted(() => {
                   <div class="loc">
                     <span class="city">{{ order.pickup_address.split(',')[0] }}</span>
                   </div>
-                  <div class="dist-pill">7.8km</div>
+                  <div class="dist-pill">Nuevo</div>
                   <div class="loc">
                     <span class="city">{{ order.drop_address.split(',')[0] }}</span>
                   </div>
@@ -326,30 +381,37 @@ onUnmounted(() => {
                  <span class="val">{{ activeOrder.drop_address }}</span>
               </div>
               
-              <div class="progress-section">
+              <div class="progress-section" v-if="isSimulatorMode">
                  <div class="bar"><div class="fill" :style="{ width: progress + '%' }"></div></div>
-                 <span class="pct">{{ progress }}% completado - {{ tripPhase === 'to_pickup' ? 'Hacia el origen' : 'Hacia el destino' }}</span>
+                 <span class="pct">{{ progress }}% completado - Simulación</span>
               </div>
            </div>
 
            <div class="control-grid">
-              <button 
-                  v-if="activeOrder.status === 'tomado' && progress >= 100" 
+              
+              <!-- Real mode or Simulator mode UI for statuses -->
+              <template v-if="activeOrder.status === 'tomado'">
+                 <button 
+                  v-if="!isSimulatorMode || progress >= 100"
                   @click="updateStatus('en_camino')" 
                   class="btn-action-mobile pickup"
-              >
-                  Comenzar el Viaje
-              </button>
+                 >
+                  Llegué al punto de recogida / Iniciar viaje
+                 </button>
+              </template>
 
-              <button 
-                  v-if="activeOrder.status === 'en_camino' && progress >= 100" 
+              <template v-if="activeOrder.status === 'en_camino'">
+                 <button 
+                  v-if="!isSimulatorMode || progress >= 100"
                   @click="updateStatus('entregado')" 
                   class="btn-action-mobile deliver"
-              >
+                 >
                   Completar Entrega
-              </button>
+                 </button>
+              </template>
 
-              <div class="speed-box">
+              <!-- Simulator Controls -->
+              <div v-if="isSimulatorMode" class="speed-box">
                 <label>Velocidad de Simulación: {{ speedKmh }} km/h</label>
                 <input type="range" min="30" max="120" v-model="speedKmh" />
               </div>
@@ -368,7 +430,7 @@ onUnmounted(() => {
     </div>
 
     <!-- Background Map (Hidden but functional for tracking) -->
-    <div id="sim-map-root" style="width:0; height:0; visibility:hidden; position: absolute;"></div>
+    <div id="app-map-root" style="width:0; height:0; visibility:hidden; position: absolute;"></div>
     
     <!-- Initializing Overlay (Mobile style) -->
     <div v-if="mapLoading" class="overlay-mobile">
@@ -379,14 +441,25 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.mobile-simulator-theme {
+.mobile-app-theme {
   display: flex;
   justify-content: center;
   align-items: center;
+  /* Occupy full space for PWA feeling */
   min-height: 100dvh;
   background: #121212;
   font-family: 'Outfit', sans-serif;
   overflow-x: hidden;
+}
+
+.app-frame {
+  width: 100%;
+  max-width: 100%;
+  height: 100vh;
+  background: #1a1a1a;
+  display: flex;
+  flex-direction: column;
+  position: relative;
 }
 
 @media (min-width: 600px) {
@@ -408,90 +481,86 @@ onUnmounted(() => {
   justify-content: space-between;
   background: #1a1a1a;
 }
-.app-header h1 { font-size: 1rem; color: #fff; font-weight: 500; margin: 0; flex: 1; text-align: center; }
-.back-btn { background: #2a2a2a; border: none; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-.notif-bell { background: #2a2a2a; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative; }
-.notif-bell .dot { position: absolute; top: 8px; right: 8px; width: 6px; height: 6px; background: #FFB800; border-radius: 50%; }
+.app-header h1 { font-size: 1.2rem; color: #fff; font-weight: 600; margin: 0; flex: 1; text-align: center; }
+.back-btn { background: #2a2a2a; border: none; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
+.notif-bell { background: #2a2a2a; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
 
 /* App Content */
 .app-content { flex: 1; overflow-y: auto; padding: 1.5rem; background: #1a1a1a; }
 .content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-.content-header h2 { font-size: 1.25rem; color: #fff; margin: 0; }
-.see-all { color: #888; background: none; border: none; font-size: 0.8rem; }
+.content-header h2 { font-size: 1.35rem; color: #fff; margin: 0; }
+.see-all { color: #888; background: none; border: none; font-size: 0.9rem; }
 
-/* Trip Cards (Style from Image) */
+/* Trip Cards */
 .trip-card-mobile {
   background: #242424;
   border-radius: 24px;
-  padding: 1.25rem;
-  margin-bottom: 1rem;
+  padding: 1.5rem;
+  margin-bottom: 1.2rem;
   transition: transform 0.2s;
 }
-.trip-card-mobile:first-child { background: #FFB800; } /* Highlight first like image */
+.trip-card-mobile:first-child { background: #FFB800; }
 .trip-card-mobile:first-child h3, .trip-card-mobile:first-child .fare, .trip-card-mobile:first-child .city { color: #000; }
 .trip-card-mobile:first-child .trip-icon { background: #000; color: #fff; }
 .trip-card-mobile:first-child .btn-tracking { background: #d99c00; color: #fff; }
 .trip-card-mobile:first-child .btn-accept-mobile { background: #000; color: #fff; }
 
 .trip-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
-.trip-icon { width: 44px; height: 44px; background: #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.2rem; }
+.trip-icon { width: 50px; height: 50px; background: #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
 .trip-meta { flex: 1; }
-.trip-meta h3 { margin: 0; font-size: 1rem; color: #fff; }
-.fare { font-size: 0.8rem; color: #FFB800; font-weight: 600; }
-.btn-tracking { padding: 0.4rem 1rem; border-radius: 20px; border: none; background: #333; color: #fff; font-size: 0.75rem; }
+.trip-meta h3 { margin: 0; font-size: 1.1rem; color: #fff; }
+.fare { font-size: 0.9rem; color: #FFB800; font-weight: 600; }
+.btn-tracking { padding: 0.5rem 1rem; border-radius: 20px; border: none; background: #333; color: #fff; font-size: 0.8rem; }
 
 .route-info { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
-.city { font-size: 0.85rem; color: #fff; font-weight: 500; }
-.dist-pill { background: rgba(0,0,0,0.1); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.75rem; color: #777; border: 1px solid rgba(255,255,255,0.1); }
+.city { font-size: 0.95rem; color: #fff; font-weight: 500; }
+.dist-pill { background: rgba(0,0,0,0.1); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; color: #777; border: 1px solid rgba(255,255,255,0.1); }
 
-.card-actions { display: flex; gap: 0.75rem; }
-.btn-reject { flex: 1; padding: 0.75rem; border-radius: 16px; border: none; background: rgba(255,255,255,0.05); color: #888; font-weight: 600; }
-.btn-accept-mobile { flex: 1; padding: 0.75rem; border-radius: 16px; border: none; background: #FFB800; color: #000; font-weight: 700; cursor: pointer; }
+.card-actions { display: flex; gap: 1rem; }
+.btn-reject { flex: 1; padding: 1rem; border-radius: 18px; border: none; background: rgba(255,255,255,0.05); color: #888; font-weight: 600; font-size: 1rem; }
+.btn-accept-mobile { flex: 1; padding: 1rem; border-radius: 18px; border: none; background: #FFB800; color: #000; font-weight: 700; cursor: pointer; font-size: 1rem; }
 
 /* Active Trip View */
 .active-trip-view { animation: slideIn 0.3s ease; }
 @keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 .active-header { text-align: center; margin-bottom: 2rem; }
-.status-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.65rem; font-weight: 800; margin-bottom: 0.5rem; }
+.status-badge { display: inline-block; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 800; margin-bottom: 0.5rem; }
 .status-badge.tomado { background: #FFB800; color: #000; }
 .status-badge.en_camino { background: #10b981; color: #fff; }
 
-.active-card { background: #242424; border-radius: 24px; padding: 1.5rem; margin-bottom: 2rem; }
-.detail-row { margin-bottom: 1rem; }
-.detail-row .lbl { display: block; font-size: 0.7rem; color: #666; text-transform: uppercase; margin-bottom: 0.25rem; }
-.detail-row .val { color: #fff; font-size: 0.9rem; line-height: 1.4; }
+.active-card { background: #242424; border-radius: 24px; padding: 1.5rem; margin-bottom: 2.5rem; }
+.detail-row { margin-bottom: 1.2rem; }
+.detail-row .lbl { display: block; font-size: 0.8rem; color: #888; text-transform: uppercase; margin-bottom: 0.4rem; }
+.detail-row .val { color: #fff; font-size: 1rem; line-height: 1.5; font-weight: 500;}
 
-.progress-section { margin-top: 1.5rem; }
-.bar { height: 8px; background: #333; border-radius: 4px; overflow: hidden; margin-bottom: 0.5rem; }
+.progress-section { margin-top: 2rem; }
+.bar { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-bottom: 0.8rem; }
 .fill { height: 100%; background: #FFB800; transition: width 0.3s; }
-.pct { font-size: 0.75rem; color: #FFB800; font-weight: 600; }
+.pct { font-size: 0.85rem; color: #FFB800; font-weight: 600; }
 
-.control-grid { display: flex; flex-direction: column; gap: 1rem; }
-.btn-action-mobile { padding: 1.25rem; border-radius: 20px; border: none; font-weight: 800; font-size: 1rem; cursor: pointer; }
-.btn-action-mobile.pickup { background: #242424; color: #FFB800; border: 2px solid #FFB800; }
-.btn-action-mobile.deliver { background: #10b981; color: #fff; }
+.control-grid { display: flex; flex-direction: column; gap: 1.25rem; }
+.btn-action-mobile { padding: 1.5rem; border-radius: 22px; border: none; font-weight: 800; font-size: 1.15rem; cursor: pointer; transition: transform 0.1s; }
+.btn-action-mobile:active { transform: scale(0.98); }
+.btn-action-mobile.pickup { background: #FFB800; color: #000; box-shadow: 0 8px 20px rgba(255, 184, 0, 0.3); }
+.btn-action-mobile.deliver { background: #10b981; color: #fff; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
 
-.sim-toggle-row { display: flex; gap: 1rem; }
-.btn-sim-mobile { flex: 1; padding: 1rem; border-radius: 20px; border: none; font-weight: 700; color: #fff; }
-.btn-sim-mobile.play { background: #334155; }
-.btn-sim-mobile.pause { background: #1a1a1a; border: 1px solid #444; }
-
-.speed-box { padding: 1rem; background: #000; border-radius: 20px; }
-.speed-box label { font-size: 0.7rem; color: #666; display: block; margin-bottom: 0.5rem; }
+.speed-box { padding: 1.2rem; background: #000; border-radius: 22px; }
+.speed-box label { font-size: 0.85rem; color: #888; display: block; margin-bottom: 0.8rem; }
 .speed-box input { width: 100%; accent-color: #FFB800; }
 
 /* Footer Nav */
-.app-nav { height: 70px; background: #1a1a1a; border-top: 1px solid #333; display: flex; align-items: center; justify-content: space-around; padding-bottom: 1rem; }
-.nav-item { font-size: 1.5rem; color: #444; }
+.app-nav { height: 80px; background: #1a1a1a; border-top: 1px solid #333; display: flex; align-items: center; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom, 1rem); }
+.nav-item { font-size: 1.6rem; color: #555; }
 .nav-item.active { color: #FFB800; }
 
-.radar-static { font-size: 3rem; margin-bottom: 1rem; opacity: 0.5; }
-.btn-refresh-mobile { background: #FFB800; color: #000; border: none; padding: 0.75rem 1.5rem; border-radius: 20px; font-weight: 700; cursor: pointer; margin-top: 1rem; }
-.empty-mobile { text-align: center; padding: 4rem 1rem; color: #555; }
+.radar-static { font-size: 4rem; margin-bottom: 1.5rem; opacity: 0.4; }
+.btn-refresh-mobile { background: #FFB800; color: #000; border: none; padding: 1rem 2rem; border-radius: 22px; font-weight: 700; cursor: pointer; margin-top: 1.5rem; font-size: 1rem;}
+.empty-mobile { text-align: center; padding: 5rem 1rem; color: #666; font-size: 1.1rem; }
 
 /* Initialization */
 .overlay-mobile { position: absolute; inset: 0; background: #1a1a1a; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.spinner { width: 40px; height: 40px; border: 4px solid #333; border-top-color: #FFB800; border-radius: 50%; animation: orbit 1s linear infinite; margin-bottom: 1rem; }
+.spinner { width: 50px; height: 50px; border: 4px solid #333; border-top-color: #FFB800; border-radius: 50%; animation: orbit 1s linear infinite; margin-bottom: 1.5rem; }
 
+@keyframes orbit { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
 </style>

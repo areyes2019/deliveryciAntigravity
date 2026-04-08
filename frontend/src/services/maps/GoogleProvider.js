@@ -105,13 +105,17 @@ export default class GoogleProvider extends BaseProvider {
     // Custom SVG icon to display emoji without the red teardrop
     let customIcon = null;
     if (options.icon) {
-        // Wrap emoji in a scalable SVG text node
-        const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
-        customIcon = {
-            url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-            scaledSize: new google.maps.Size(48, 48),
-            anchor: new google.maps.Point(24, 24)
-        };
+        if (options.icon.startsWith('http')) {
+            customIcon = options.icon;
+        } else {
+            // Wrap emoji in a scalable SVG text node
+            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
+            customIcon = {
+                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+                scaledSize: new google.maps.Size(48, 48),
+                anchor: new google.maps.Point(24, 24)
+            };
+        }
     }
 
     const marker = new google.maps.Marker({
@@ -145,12 +149,16 @@ export default class GoogleProvider extends BaseProvider {
       marker.setPosition(coords);
       // Optionally update the icon if provided
       if (options.icon) {
-          const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
-          marker.setIcon({
-              url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-              scaledSize: new google.maps.Size(48, 48),
-              anchor: new google.maps.Point(24, 24)
-          });
+          if (options.icon.startsWith('http')) {
+              marker.setIcon(options.icon);
+          } else {
+              const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
+              marker.setIcon({
+                  url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+                  scaledSize: new google.maps.Size(48, 48),
+                  anchor: new google.maps.Point(24, 24)
+              });
+          }
       }
     } else if (!marker && coords) {
       // Fallback: if marker doesn't exist, create it

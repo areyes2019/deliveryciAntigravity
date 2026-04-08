@@ -14,7 +14,7 @@ class SuperAdminSeeder extends Seeder
         $data = [
             'name'      => 'Super Admin',
             'email'     => 'admin@delivery.com',
-            'password'  => 'superadmin123',
+            'password'  => '12345678',
             'role'      => 'superadmin',
             'is_active' => 1
         ];
