@@ -19,6 +19,8 @@ let directionsRenderer = null
 const form = ref({
   pickup_address: '',
   drop_address: '',
+  receiver_name: '',
+  receiver_phone: '',
   description: '',
   payment_type: 'prepaid',
   product_amount: null,
@@ -119,6 +121,7 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
 
 // ─── Save order ───────────────────────────────────────────────────────────────
 const saveOrder = async () => {
+  await loadBalance()
   if (!canAffordOrder.value) {
     alert('No te quedan viajes prepagados suficientes. Necesitas recargar saldo.')
     return
@@ -335,6 +338,32 @@ onMounted(async () => {
                   required
                 />
                 <span v-if="form.drop_lat" class="coord-badge">✓ Ubicado</span>
+              </div>
+            </div>
+          </div>
+
+          <!-- Receiver Info Row -->
+          <div class="form-row">
+            <div class="form-group">
+              <label>👤 Nombre de quien recibe</label>
+              <div class="input-wrapper">
+                <input
+                  v-model="form.receiver_name"
+                  type="text"
+                  placeholder="Ej. Juan Pérez"
+                  required
+                />
+              </div>
+            </div>
+            <div class="form-group">
+              <label>📞 Teléfono de quien recibe</label>
+              <div class="input-wrapper">
+                <input
+                  v-model="form.receiver_phone"
+                  type="tel"
+                  placeholder="Ej. 614 123 4567"
+                  required
+                />
               </div>
             </div>
           </div>

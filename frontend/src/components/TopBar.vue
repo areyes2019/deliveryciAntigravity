@@ -88,7 +88,7 @@ const menuItems = computed(() => {
     { name: 'Panel', path: '/', icon: '📊', roles: ['superadmin', 'client_admin'] },
     { name: 'Clientes', path: '/clients', icon: '🏢', roles: ['superadmin'] },
     { name: 'Conductores', path: '/drivers', icon: '🏎️', roles: ['client_admin'] },
-    { name: 'Pedidos', path: '/orders', icon: '📦', roles: ['client_admin'] },
+    { name: 'Envíos', path: '/orders', icon: '📦', roles: ['client_admin'] },
     { name: 'Precios', path: '/pricing', icon: '💲', roles: ['client_admin'] },
     { name: 'Reportes', path: '/reports', icon: '📈', roles: ['superadmin', 'client_admin'] },
   ]

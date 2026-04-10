@@ -59,13 +59,15 @@ class OrderController extends BaseController
         }
 
         $rules = [
-            'pickup_lat'     => 'required|decimal',
-            'pickup_lng'     => 'required|decimal',
-            'pickup_address' => 'required',
-            'drop_lat'       => 'required|decimal',
-            'drop_lng'       => 'required|decimal',
-            'drop_address'   => 'required',
-            'payment_type'   => 'required|in_list[prepaid,cash_on_delivery,cash_full]'
+            'pickup_lat'      => 'required|decimal',
+            'pickup_lng'      => 'required|decimal',
+            'pickup_address'  => 'required',
+            'drop_lat'        => 'required|decimal',
+            'drop_lng'        => 'required|decimal',
+            'drop_address'    => 'required',
+            'receiver_name'   => 'required|min_length[3]|max_length[255]',
+            'receiver_phone'  => 'required|min_length[7]|max_length[20]',
+            'payment_type'    => 'required|in_list[prepaid,cash_on_delivery,cash_full]'
         ];
 
         // product_amount is required and must be > 0 only for cash_full

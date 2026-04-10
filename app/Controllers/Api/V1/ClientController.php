@@ -80,8 +80,7 @@ class ClientController extends BaseController
                 'name'      => $input['name'],
                 'email'     => $input['email'],
                 'password'  => $input['password'],
-                'role'      => 'client_admin',
-                'is_active' => 1
+                'role'      => 'client_admin'
             ]);
 
             if (!$userId) {

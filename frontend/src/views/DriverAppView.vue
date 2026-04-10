@@ -8,6 +8,52 @@ const availableOrders = ref([])
 const activeOrder = ref(null)
 const isLoading = ref(false)
 const mapLoading = ref(true)
+const showNavModal = ref(false)
+const navPreference = ref(localStorage.getItem('nav_preference') || null)
+const tripCompletedMessage = ref('')
+
+// --- Navigation Helper ---
+const openNavigation = (provider = null) => {
+    if (!activeOrder.value) return;
+    
+    // If provider is explicitly passed, save it as preference
+    if (provider) {
+        navPreference.value = provider;
+        localStorage.setItem('nav_preference', provider);
+        showNavModal.value = false;
+    }
+
+    // Use saved preference if available, otherwise show modal
+    const selectedProvider = navPreference.value;
+    
+    if (!selectedProvider) {
+        showNavModal.value = true;
+        return;
+    }
+
+    // If driver chooses to navigate on their own, don't open external navigation
+    if (selectedProvider === 'self-navigate') {
+        return;
+    }
+
+    // Determine target coordinates based on current status
+    // "tomado" or "arribado" means we need to go to PICKUP
+    // "en_camino" means we need to go to DROP-OFF
+    const isToPickup = activeOrder.value.status === 'tomado' || activeOrder.value.status === 'arribado';
+    const lat = isToPickup ? activeOrder.value.pickup_lat : activeOrder.value.drop_lat;
+    const lng = isToPickup ? activeOrder.value.pickup_lng : activeOrder.value.drop_lng;
+
+    let url = '';
+    if (selectedProvider === 'google') {
+        url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
+    } else if (selectedProvider === 'waze') {
+        url = `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
+    }
+
+    if (url) {
+        window.open(url, '_blank');
+    }
+}
 
 // Simulation & Real Mode State
 const isSimulatorMode = ref(false) // <--- MODE TOGGLE
@@ -19,9 +65,13 @@ const speedKmh = ref(60) // Default 60km/h
 const routePoints = ref([])
 const currentIndex = ref(0)
 const progress = ref(0)
+const isAvailable = ref(true) // Availability/Connection status
+const showMenu = ref(false) // Settings menu toggle
 let simInterval = null
 let pollInterval = null
 let locationWatchId = null
+let locationSyncInterval = null
+let simSyncInterval = null
 let lastSyncTime = 0
 
 // --- Computed ---
@@ -42,14 +92,45 @@ const loadAvailableOrders = async () => {
     }
 }
 
+const syncCurrentTrip = async () => {
+    // Try to load from localStorage first for immediate UI
+    const cached = localStorage.getItem('active_trip')
+    if (cached && !activeOrder.value) {
+        activeOrder.value = JSON.parse(cached)
+        loadRoute()
+    }
+
+    try {
+        const res = await api.get('/driver/trips/current')
+        if (res.data.status && res.data.data) {
+            activeOrder.value = res.data.data
+            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
+            loadRoute()
+        } else {
+            // No active trip found in backend, clear local state
+            activeOrder.value = null
+            localStorage.removeItem('active_trip')
+        }
+    } catch (e) {
+        console.error('Error syncing current trip:', e)
+    }
+}
+
 const acceptOrder = async (order) => {
     if (activeOrder.value) return
     try {
         const res = await api.post(`/driver/trips/${order.id}/accept`)
         if (res.data.status) {
             activeOrder.value = res.data.data
+            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
             progress.value = 0
             loadRoute()
+            showNavModal.value = true
+            
+            // Ensure tracking is active after accepting order
+            if (!isSimulatorMode.value && !locationSyncInterval) {
+                startRealTracking()
+            }
         }
     } catch (e) {
         alert(e.response?.data?.message || 'Error al aceptar el viaje')
@@ -62,13 +143,30 @@ const updateStatus = async (status) => {
         const res = await api.post(`/driver/trips/${activeOrder.value.id}/status`, { status })
         if (res.data.status) {
             activeOrder.value.status = status
+            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
+            
+            // Force immediate location sync when status changes
+            syncLocation()
+            
+            // Ensure tracking is active after status change
+            if (!isSimulatorMode.value && !locationSyncInterval) {
+                startRealTracking()
+            }
+            
             if (status === 'en_camino') {
                 progress.value = 0
                 currentIndex.value = 0
                 loadRoute() // Load Leg 2
+                // Trigger auto-navigation to destination
+                openNavigation();
             } else if (status === 'entregado') {
                 stopSimulation()
                 activeOrder.value = null
+                localStorage.removeItem('active_trip');
+                
+                // Clear any navigation-related session state if needed
+                // But keep navPreference for future trips
+                
                 routePoints.value = []
                 currentIndex.value = 0
                 progress.value = 0
@@ -76,6 +174,10 @@ const updateStatus = async (status) => {
                 loadAvailableOrders()
                 MapService.clearRoutes()
                 MapService.clearMarkers()
+
+                // Show completion message
+                tripCompletedMessage.value = "Viaje completado. Ya puedes cerrar tu aplicación de navegación."
+                setTimeout(() => { tripCompletedMessage.value = '' }, 5000)
             }
         }
     } catch (e) {
@@ -94,7 +196,7 @@ const loadRoute = async () => {
     const FALLBACK_LAT = 20.5222;
     const FALLBACK_LNG = -100.8122;
 
-    if (activeOrder.value.status === 'tomado') {
+    if (activeOrder.value.status === 'tomado' || activeOrder.value.status === 'arribado') {
         tripPhase.value = 'to_pickup';
         origin = currentPos.value || { lat: FALLBACK_LAT, lng: FALLBACK_LNG };
         destination = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
@@ -165,6 +267,7 @@ const startRealTracking = () => {
         return
     }
 
+    // Watch position for real-time location updates (visual rendering)
     locationWatchId = navigator.geolocation.watchPosition(
         (position) => {
             const newPos = {
@@ -173,15 +276,8 @@ const startRealTracking = () => {
             };
             currentPos.value = newPos;
             
-            // Render driver position
+            // Render driver position immediately
             MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' });
-            
-            // Sync to backend periodically or on every change
-            const now = Date.now();
-            if (now - lastSyncTime > 2000) { // Throttle sync to every 2 seconds
-                syncLocation();
-                lastSyncTime = now;
-            }
         },
         (error) => {
             console.error('Error watching location:', error);
@@ -192,6 +288,12 @@ const startRealTracking = () => {
             timeout: 5000
         }
     );
+
+    // Sync location to backend every 3 seconds (as requested)
+    // This is independent of position changes, ensuring consistent updates
+    locationSyncInterval = setInterval(() => {
+        syncLocation();
+    }, 3000);
 };
 
 // --- Simulator Tracking ---
@@ -214,18 +316,16 @@ const startSimulation = () => {
         // Update Marker
         MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
         
-        // Polling sync to backend (throttle to avoid flooding)
-        const now = Date.now()
-        if (now - lastSyncTime > 1500) { // Every 1.5s
-            syncLocation()
-            lastSyncTime = now
-        }
-        
         progress.value = Math.round((currentIndex.value / (routePoints.value.length - 1)) * 100)
     }
 
     const intervalMs = Math.max(100, 1000 - (speedKmh.value * 8))
     simInterval = setInterval(moveStep, intervalMs)
+
+    // Sync location to backend every 3 seconds (consistent with real tracking)
+    simSyncInterval = setInterval(() => {
+        syncLocation();
+    }, 3000);
 }
 
 const pauseSimulation = () => {
@@ -235,6 +335,21 @@ const pauseSimulation = () => {
 
 const stopSimulation = () => {
     pauseSimulation()
+    if (simSyncInterval) {
+        clearInterval(simSyncInterval);
+        simSyncInterval = null;
+    }
+}
+
+const stopRealTracking = () => {
+    if (locationWatchId) {
+        navigator.geolocation.clearWatch(locationWatchId);
+        locationWatchId = null;
+    }
+    if (locationSyncInterval) {
+        clearInterval(locationSyncInterval);
+        locationSyncInterval = null;
+    }
 }
 
 const syncLocation = async () => {
@@ -249,8 +364,55 @@ const syncLocation = async () => {
     }
 }
 
+const toggleAvailability = async () => {
+    const confirmToggle = confirm(
+        isAvailable.value 
+            ? '¿Desconectarte de la plataforma? No recibirás nuevos viajes.'
+            : '¿Conectarte a la plataforma? Comenzarás a recibir nuevos viajes.'
+    )
+    
+    if (!confirmToggle) return
+    
+    try {
+        const response = await api.post('/driver/toggle-availability')
+        if (response.data.status) {
+            isAvailable.value = !isAvailable.value
+            // Save availability status to localStorage
+            localStorage.setItem('driver_available', JSON.stringify(isAvailable.value))
+            const message = isAvailable.value 
+                ? '📍 ¡Conectado! Ya recibes viajes.'
+                : '🔴 Desconectado. No recibirás nuevos viajes.'
+            alert(message)
+        }
+    } catch (error) {
+        alert(error.response?.data?.message || 'Error al cambiar disponibilidad')
+        console.error('Error toggling availability:', error)
+    }
+}
+
+// --- Visibility Change Handler ---
+const handleVisibilityChange = () => {
+    // When app comes back from background (Waze/Maps navigation)
+    if (!document.hidden && activeOrder.value && !isSimulatorMode.value) {
+        // Ensure tracking is active
+        if (!locationSyncInterval) {
+            console.log('App returned from background, restarting tracking...')
+            startRealTracking()
+        }
+        // Force immediate sync
+        syncLocation()
+    }
+}
+
 // --- Init ---
 onMounted(async () => {
+    // Load driver availability status from localStorage
+    const savedAvailability = localStorage.getItem('driver_available')
+    if (savedAvailability !== null) {
+        isAvailable.value = JSON.parse(savedAvailability)
+    }
+    
+    await syncCurrentTrip()
     loadAvailableOrders()
     
     // Background polling for new trips (every 10s)
@@ -259,6 +421,9 @@ onMounted(async () => {
             loadAvailableOrders()
         }
     }, 10000)
+
+    window.addEventListener('online', syncCurrentTrip)
+    document.addEventListener('visibilitychange', handleVisibilityChange)
     
     // Init Map
     await MapService.ensureSDKLoaded()
@@ -281,16 +446,17 @@ onMounted(async () => {
 onUnmounted(() => {
     if (simInterval) clearInterval(simInterval)
     if (pollInterval) clearInterval(pollInterval)
+    if (locationSyncInterval) clearInterval(locationSyncInterval)
+    if (simSyncInterval) clearInterval(simSyncInterval)
     if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId)
+    window.removeEventListener('online', syncCurrentTrip)
+    document.removeEventListener('visibilitychange', handleVisibilityChange)
 })
 
 const toggleSimulatorMode = () => {
     isSimulatorMode.value = !isSimulatorMode.value;
     if (isSimulatorMode.value) {
-        if (locationWatchId) {
-            navigator.geolocation.clearWatch(locationWatchId);
-            locationWatchId = null;
-        }
+        stopRealTracking();
         if (activeOrder.value) startSimulation();
     } else {
         stopSimulation();
@@ -307,10 +473,31 @@ const toggleSimulatorMode = () => {
       <!-- Top Bar -->
       <header class="app-header">
         <button class="back-btn">←</button>
-        <h1>Modo Conductor</h1>
-        <div class="notif-bell" @click="toggleSimulatorMode" title="Toggle Simulator Mode">
-          <span v-if="isSimulatorMode">🎮</span>
-          <span v-else>📍</span>
+        <div class="header-title-section">
+          <h1>Modo Conductor</h1>
+          <div class="online-indicator" :class="{ 'online': isAvailable, 'offline': !isAvailable }">
+            <span class="status-dot"></span>
+            <span class="status-text">{{ isAvailable ? 'On line' : 'Off line' }}</span>
+          </div>
+        </div>
+        <div class="settings-menu-container">
+          <button class="settings-btn" @click="showMenu = !showMenu" title="Ajustes">
+            ⚙️
+          </button>
+          <div v-if="showMenu" class="settings-dropdown">
+            <button class="menu-item" @click="toggleSimulatorMode(); showMenu = false">
+              <span v-if="isSimulatorMode">📍 Cambiar a VIVO</span>
+              <span v-else>🎮 Probar SIMULADOR</span>
+            </button>
+            <button 
+              class="menu-item" 
+              :class="{ 'available': isAvailable, 'unavailable': !isAvailable }"
+              @click="toggleAvailability(); showMenu = false"
+            >
+              <span v-if="isAvailable">🟢 Desconectarse</span>
+              <span v-else>🔴 Conectarse</span>
+            </button>
+          </div>
         </div>
       </header>
 
@@ -359,16 +546,33 @@ const toggleSimulatorMode = () => {
             <div class="radar-static">📦</div>
             <p>No hay viajes disponibles hoy</p>
             <button @click="loadAvailableOrders" class="btn-refresh-mobile">Buscar Nuevamente</button>
+
+            <!-- Simulator Info -->
+            <div v-if="isSimulatorMode" class="simulator-info-box">
+              <h3>🎮 Modo Simulador Activo</h3>
+              <p>Puedes aceptar un viaje de la lista anterior y probarlo sin salir de tu oficina.</p>
+              <p>El rastreo funcionará igual que en modo EN VIVO (cada 3 segundos).</p>
+              <button class="btn-switch-live" @click="toggleSimulatorMode">Cambiar a Modo EN VIVO</button>
+            </div>
           </div>
         </div>
 
         <!-- Tab 2: Workflow (If trip accepted) -->
         <div v-else class="active-trip-view">
            <div class="active-header">
-              <div class="status-badge" :class="activeOrder.status">
-                 {{ activeOrder.status === 'tomado' ? 'ACEPTADO' : (activeOrder.status === 'en_camino' ? 'EN CAMINO' : activeOrder.status.toUpperCase()) }}
-              </div>
-              <h3>Viaje en Progreso</h3>
+               <div class="status-badge" :class="activeOrder.status">
+                  {{ 
+                    activeOrder.status === 'tomado' ? 'ACEPTADO' : 
+                    activeOrder.status === 'arribado' ? 'ESPERANDO' : 
+                    activeOrder.status === 'en_camino' ? 'EN CAMINO' : 
+                    activeOrder.status.toUpperCase() 
+                  }}
+               </div>
+               <h3>Viaje en Progreso</h3>
+               <div class="nav-btn-group">
+                  <button @click="openNavigation()" class="btn-mini-nav">🧭 {{ navPreference ? 'Continuar' : 'Navegar' }}</button>
+                  <button v-if="navPreference" @click="showNavModal = true" class="btn-mini-nav settings">⚙️</button>
+               </div>
            </div>
 
            <div class="active-card">
@@ -393,10 +597,20 @@ const toggleSimulatorMode = () => {
               <template v-if="activeOrder.status === 'tomado'">
                  <button 
                   v-if="!isSimulatorMode || progress >= 100"
+                  @click="updateStatus('arribado')" 
+                  class="btn-action-mobile arrived"
+                 >
+                  Llegué al punto de recogida
+                 </button>
+              </template>
+
+              <template v-if="activeOrder.status === 'arribado'">
+                 <button 
+                  v-if="!isSimulatorMode || progress >= 100"
                   @click="updateStatus('en_camino')" 
                   class="btn-action-mobile pickup"
                  >
-                  Llegué al punto de recogida / Iniciar viaje
+                  Iniciar viaje (Hacia el destino)
                  </button>
               </template>
 
@@ -411,9 +625,44 @@ const toggleSimulatorMode = () => {
               </template>
 
               <!-- Simulator Controls -->
-              <div v-if="isSimulatorMode" class="speed-box">
-                <label>Velocidad de Simulación: {{ speedKmh }} km/h</label>
-                <input type="range" min="30" max="120" v-model="speedKmh" />
+              <div v-if="isSimulatorMode && activeOrder" class="simulator-control-panel">
+                <div class="sim-header">
+                  <span class="sim-title">🎮 CONTROL DE SIMULADOR</span>
+                  <span class="sim-status" :class="{ 'active': isSimulating }">
+                    {{ isSimulating ? '▶️ ACTIVO' : '⏸️ PAUSADO' }}
+                  </span>
+                </div>
+
+                <div class="sim-progress">
+                  <div class="progress-bar">
+                    <div class="progress-fill" :style="{ width: progress + '%' }"></div>
+                  </div>
+                  <span class="progress-text">{{ progress }}% recorrido</span>
+                </div>
+
+                <div class="sim-speed-control">
+                  <label>Velocidad Simulada</label>
+                  <div class="speed-display">
+                    <span class="speed-value">{{ speedKmh }} km/h</span>
+                  </div>
+                  <input 
+                    type="range" 
+                    min="10" 
+                    max="120" 
+                    v-model="speedKmh" 
+                    class="speed-slider"
+                  />
+                  <div class="speed-hints">
+                    <span class="hint">🚶 Lento (10 km/h)</span>
+                    <span class="hint">🚗 Normal (60 km/h)</span>
+                    <span class="hint">🏎️ Rápido (120 km/h)</span>
+                  </div>
+                </div>
+
+                <div class="sim-info">
+                  <p>💡 Usa el simulador para probar sin salir a la calle</p>
+                  <p>📍 El rastreo funciona igual que en modo EN VIVO (cada 3 segundos)</p>
+                </div>
               </div>
            </div>
         </div>
@@ -429,9 +678,39 @@ const toggleSimulatorMode = () => {
 
     </div>
 
+    <!-- Navigation Selection Modal -->
+    <div v-if="showNavModal" class="nav-modal-overlay" @click.self="showNavModal = false">
+       <div class="nav-modal-content">
+          <h3>Iniciar Navegación</h3>
+          <p>Selecciona cómo deseas viajar:</p>
+          
+          <div class="nav-options">
+             <button @click="openNavigation('google')" class="nav-opt-btn google">
+                <span class="icon">🗺️</span>
+                Google Maps
+             </button>
+             <button @click="openNavigation('waze')" class="nav-opt-btn waze">
+                <span class="icon">🚙</span>
+                Waze
+             </button>
+             <button @click="openNavigation('self-navigate')" class="nav-opt-btn self-nav">
+                <span class="icon">🛣️</span>
+                Viajar por mi cuenta
+             </button>
+          </div>
+
+          <p class="tracking-notice">⚠️ Serás rastreado en todo momento para tu seguridad</p>
+          
+          <button @click="showNavModal = false" class="btn-close-modal">Cancelar</button>
+       </div>
+    </div>
+
     <!-- Background Map (Hidden but functional for tracking) -->
     <div id="app-map-root" style="width:0; height:0; visibility:hidden; position: absolute;"></div>
     
+    <!-- Completion Message Toast -->
+    <div v-if="tripCompletedMessage" class="completion-toast">{{ tripCompletedMessage }}</div>
+
     <!-- Initializing Overlay (Mobile style) -->
     <div v-if="mapLoading" class="overlay-mobile">
        <div class="spinner"></div>
@@ -475,15 +754,131 @@ const toggleSimulatorMode = () => {
 
 /* App Header */
 .app-header {
-  padding: 2.5rem 1.5rem 1rem;
+  padding: 1rem 1.5rem;
   display: flex;
   align-items: center;
   justify-content: space-between;
-  background: #1a1a1a;
+  background: linear-gradient(135deg, #1a1a1a 0%, #242424 100%);
+  gap: 1rem;
 }
-.app-header h1 { font-size: 1.2rem; color: #fff; font-weight: 600; margin: 0; flex: 1; text-align: center; }
-.back-btn { background: #2a2a2a; border: none; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; }
-.notif-bell { background: #2a2a2a; color: white; width: 40px; height: 40px; border-radius: 50%; display: flex; align-items: center; justify-content: center; position: relative; cursor: pointer; }
+.app-header h1 { font-size: 1rem; color: #fff; font-weight: 600; margin: 0; }
+
+.header-title-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+  flex: 1;
+}
+
+.online-indicator {
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+  font-size: 0.75rem;
+  font-weight: 600;
+  padding: 0.25rem 0.6rem;
+  border-radius: 12px;
+  width: fit-content;
+}
+
+.online-indicator.online {
+  background: rgba(16, 185, 129, 0.15);
+  color: #10B981;
+}
+
+.online-indicator.offline {
+  background: rgba(239, 68, 68, 0.15);
+  color: #EF4444;
+}
+
+.status-dot {
+  display: inline-block;
+  width: 0.5rem;
+  height: 0.5rem;
+  border-radius: 50%;
+  animation: pulse-status 2s ease-in-out infinite;
+}
+
+.online-indicator.online .status-dot {
+  background: #10B981;
+}
+
+.online-indicator.offline .status-dot {
+  background: #EF4444;
+}
+
+@keyframes pulse-status {
+  0%, 100% { opacity: 1; }
+  50% { opacity: 0.5; }
+}
+
+.back-btn { background: #2a2a2a; border: none; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.2s; }
+.back-btn:hover { background: #333; }
+
+.settings-menu-container {
+  position: relative;
+}
+
+.settings-btn {
+  background: none;
+  border: none;
+  font-size: 1.5rem;
+  cursor: pointer;
+  padding: 0.25rem;
+  transition: transform 0.2s ease;
+}
+
+.settings-btn:hover {
+  transform: rotate(90deg);
+}
+
+.settings-btn:active {
+  transform: rotate(90deg) scale(0.9);
+}
+
+.settings-dropdown {
+  position: absolute;
+  top: 100%;
+  right: 0;
+  margin-top: 0.5rem;
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 12px;
+  min-width: 200px;
+  z-index: 1000;
+  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+  overflow: hidden;
+}
+
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 0.75rem 1rem;
+  background: none;
+  border: none;
+  color: white;
+  text-align: left;
+  cursor: pointer;
+  font-size: 0.9rem;
+  transition: background 0.2s ease;
+  border-bottom: 1px solid #444;
+}
+
+.menu-item:last-child {
+  border-bottom: none;
+}
+
+.menu-item:hover {
+  background: #333;
+}
+
+.menu-item.available {
+  color: #10B981;
+}
+
+.menu-item.unavailable {
+  color: #EF4444;
+}
 
 /* App Content */
 .app-content { flex: 1; overflow-y: auto; padding: 1.5rem; background: #1a1a1a; }
@@ -527,6 +922,7 @@ const toggleSimulatorMode = () => {
 .active-header { text-align: center; margin-bottom: 2rem; }
 .status-badge { display: inline-block; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 800; margin-bottom: 0.5rem; }
 .status-badge.tomado { background: #FFB800; color: #000; }
+.status-badge.arribado { background: #3b82f6; color: #fff; }
 .status-badge.en_camino { background: #10b981; color: #fff; }
 
 .active-card { background: #242424; border-radius: 24px; padding: 1.5rem; margin-bottom: 2.5rem; }
@@ -542,12 +938,207 @@ const toggleSimulatorMode = () => {
 .control-grid { display: flex; flex-direction: column; gap: 1.25rem; }
 .btn-action-mobile { padding: 1.5rem; border-radius: 22px; border: none; font-weight: 800; font-size: 1.15rem; cursor: pointer; transition: transform 0.1s; }
 .btn-action-mobile:active { transform: scale(0.98); }
+.btn-action-mobile.arrived { background: #3b82f6; color: #fff; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3); }
 .btn-action-mobile.pickup { background: #FFB800; color: #000; box-shadow: 0 8px 20px rgba(255, 184, 0, 0.3); }
 .btn-action-mobile.deliver { background: #10b981; color: #fff; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
 
 .speed-box { padding: 1.2rem; background: #000; border-radius: 22px; }
 .speed-box label { font-size: 0.85rem; color: #888; display: block; margin-bottom: 0.8rem; }
 .speed-box input { width: 100%; accent-color: #FFB800; }
+
+/* Simulator Control Panel */
+.simulator-control-panel {
+  background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
+  border: 2px solid #8B5CF6;
+  border-radius: 20px;
+  padding: 1.5rem;
+  margin-top: 1.5rem;
+  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
+}
+
+.sim-header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  margin-bottom: 1.2rem;
+  padding-bottom: 1rem;
+  border-bottom: 2px solid #8B5CF6;
+}
+
+.sim-title {
+  font-size: 0.95rem;
+  font-weight: 700;
+  color: #8B5CF6;
+}
+
+.sim-status {
+  font-size: 0.85rem;
+  font-weight: 600;
+  padding: 0.4rem 0.8rem;
+  background: rgba(139, 92, 246, 0.2);
+  border-radius: 12px;
+  color: #A78BFA;
+}
+
+.sim-status.active {
+  background: rgba(16, 185, 129, 0.2);
+  color: #10B981;
+}
+
+.sim-progress {
+  margin-bottom: 1.5rem;
+}
+
+.progress-bar {
+  width: 100%;
+  height: 10px;
+  background: #333;
+  border-radius: 10px;
+  overflow: hidden;
+  margin-bottom: 0.5rem;
+  border: 1px solid #8B5CF6;
+}
+
+.progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, #8B5CF6 0%, #A78BFA 100%);
+  transition: width 0.3s ease;
+}
+
+.progress-text {
+  font-size: 0.8rem;
+  color: #888;
+  display: block;
+}
+
+.sim-speed-control {
+  margin-bottom: 1.5rem;
+}
+
+.sim-speed-control label {
+  display: block;
+  font-size: 0.85rem;
+  color: #aaa;
+  font-weight: 600;
+  margin-bottom: 0.8rem;
+}
+
+.speed-display {
+  background: #1a1a1a;
+  border-radius: 12px;
+  padding: 0.8rem;
+  margin-bottom: 0.8rem;
+  text-align: center;
+}
+
+.speed-value {
+  font-size: 1.4rem;
+  font-weight: 700;
+  color: #8B5CF6;
+}
+
+.speed-slider {
+  width: 100%;
+  height: 8px;
+  border-radius: 8px;
+  background: #333;
+  outline: none;
+  -webkit-appearance: none;
+  appearance: none;
+  margin-bottom: 0.8rem;
+}
+
+.speed-slider::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #8B5CF6;
+  cursor: pointer;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
+}
+
+.speed-slider::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 50%;
+  background: #8B5CF6;
+  cursor: pointer;
+  border: none;
+  box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
+}
+
+.speed-hints {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.75rem;
+  color: #666;
+}
+
+.hint {
+  display: flex;
+  align-items: center;
+  gap: 0.3rem;
+}
+
+.sim-info {
+  background: rgba(139, 92, 246, 0.1);
+  border-left: 3px solid #8B5CF6;
+  padding: 0.8rem 1rem;
+  border-radius: 8px;
+  font-size: 0.8rem;
+  color: #A78BFA;
+  line-height: 1.5;
+}
+
+.sim-info p {
+  margin: 0.4rem 0;
+}
+
+/* Simulator Info Box */
+.simulator-info-box {
+  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.05) 100%);
+  border: 2px solid #8B5CF6;
+  border-radius: 16px;
+  padding: 1.5rem;
+  margin-top: 2rem;
+  text-align: center;
+}
+
+.simulator-info-box h3 {
+  color: #8B5CF6;
+  margin: 0 0 0.8rem 0;
+  font-size: 1.1rem;
+}
+
+.simulator-info-box p {
+  color: #A78BFA;
+  font-size: 0.85rem;
+  margin: 0.6rem 0;
+  line-height: 1.5;
+}
+
+.btn-switch-live {
+  background: linear-gradient(135deg, #8B5CF6 0%, #A78BFA 100%);
+  color: white;
+  border: none;
+  padding: 0.8rem 1.5rem;
+  border-radius: 20px;
+  font-weight: 600;
+  cursor: pointer;
+  margin-top: 1rem;
+  transition: all 0.2s ease;
+}
+
+.btn-switch-live:hover {
+  transform: translateY(-2px);
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+}
+
+.btn-switch-live:active {
+  transform: translateY(0);
+}
 
 /* Footer Nav */
 .app-nav { height: 80px; background: #1a1a1a; border-top: 1px solid #333; display: flex; align-items: center; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom, 1rem); }
@@ -563,4 +1154,46 @@ const toggleSimulatorMode = () => {
 .spinner { width: 50px; height: 50px; border: 4px solid #333; border-top-color: #FFB800; border-radius: 50%; animation: orbit 1s linear infinite; margin-bottom: 1.5rem; }
 
 @keyframes orbit { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
+
+/* Navigation Modal Styles */
+.btn-mini-nav { background: #333; border: 1px solid #444; color: #FFB800; padding: 0.5rem 1rem; border-radius: 12px; font-weight: 600; font-size: 0.9rem; margin-top: 0.5rem; cursor: pointer; }
+
+.nav-modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 2rem; }
+.nav-modal-content { background: #242424; width: 100%; max-width: 320px; border-radius: 28px; padding: 2rem; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); border: 1px solid #333; }
+.nav-modal-content h3 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.4rem; }
+.nav-modal-content p { color: #888; margin-bottom: 2rem; font-size: 0.95rem; }
+
+.nav-options { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
+.nav-opt-btn { display: flex; align-items: center; gap: 1rem; padding: 1.2rem; border-radius: 18px; border: none; color: #fff; font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: transform 0.1s; }
+.nav-opt-btn:active { transform: scale(0.97); }
+.nav-opt-btn.google { background: #4285F4; }
+.nav-opt-btn.waze { background: #33CCFF; color: #000; }
+.nav-opt-btn.self-nav { background: #9C27B0; }
+.nav-opt-btn .icon { font-size: 1.4rem; }
+
+.tracking-notice { color: #FFB800; font-size: 0.85rem; margin: 1rem 0; padding: 0.75rem 1rem; background: rgba(255, 184, 0, 0.1); border-radius: 8px; border-left: 3px solid #FFB800; }
+
+.btn-close-modal { background: none; border: none; color: #666; font-weight: 600; cursor: pointer; padding: 0.5rem; font-size: 0.9rem; }
+
+.nav-btn-group { display: flex; gap: 0.5rem; justify-content: center; align-items: center; }
+.btn-mini-nav.settings { color: #888; border-color: #333; }
+
+.completion-toast {
+   position: fixed;
+   bottom: 100px;
+   left: 50%;
+   transform: translateX(-50%);
+   background: #10b981;
+   color: #fff;
+   padding: 1rem 2rem;
+   border-radius: 30px;
+   font-weight: 700;
+   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
+   z-index: 1000;
+   animation: slideUp 0.3s ease;
+   text-align: center;
+   width: 80%;
+   max-width: 300px;
+}
+@keyframes slideUp { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
 </style>

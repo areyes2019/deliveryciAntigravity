@@ -34,8 +34,13 @@ class OrderService
             return ['status' => false, 'message' => 'Client not found'];
         }
 
-        if ($client['credits_balance'] < 1) {
-            return ['status' => false, 'message' => 'Saldo insuficiente para crear este pedido. Necesitas al menos 1 crédito.'];
+        $costPerTrip = (float)($client['cost_per_trip'] ?? 1);
+        if ($client['credits_balance'] < $costPerTrip) {
+            $tripsAvailable = floor($client['credits_balance'] / ($costPerTrip ?: 1));
+            return [
+                'status' => false, 
+                'message' => "Saldo insuficiente. Este viaje requiere {$costPerTrip} créditos. Tu saldo actual es de {$client['credits_balance']} créditos (aprox. {$tripsAvailable} viajes)."
+            ];
         }
 
         $distanceKm = $this->distanceService->getDistanceInKm($data['pickup_address'], $data['drop_address']);
@@ -84,6 +89,8 @@ class OrderService
             'drop_lat'         => $data['drop_lat'],
             'drop_lng'         => $data['drop_lng'],
             'drop_address'     => $data['drop_address'],
+            'receiver_name'    => $data['receiver_name'] ?? null,
+            'receiver_phone'   => $data['receiver_phone'] ?? null,
             'description'      => $data['description'] ?? null,
             'status'           => 'publicado',
             'payment_type'     => $paymentType,
@@ -105,7 +112,7 @@ class OrderService
         
         if (!$creditDeducted) {
             $this->db->transRollback();
-            return ['status' => false, 'message' => 'Insufficient credits during transaction'];
+            return ['status' => false, 'message' => 'Error al descontar saldo: Créditos insuficientes para completar la transacción.'];
         }
 
         $this->statusLogModel->insert([

@@ -10,7 +10,7 @@ const menuItems = computed(() => {
     { name: 'Panel', path: '/', icon: '📊', roles: ['superadmin', 'client_admin'] },
     { name: 'Clientes', path: '/clients', icon: '🏢', roles: ['superadmin'] },
     { name: 'Conductores', path: '/drivers', icon: '🏎️', roles: ['client_admin'] },
-    { name: 'Pedidos', path: '/orders', icon: '📦', roles: ['client_admin'] },
+    { name: 'Envíos', path: '/orders', icon: '📦', roles: ['client_admin'] },
     { name: 'Precios', path: '/pricing', icon: '💲', roles: ['client_admin'] },
     { name: 'Reportes', path: '/reports', icon: '📈', roles: ['superadmin', 'client_admin'] },
   ]
@@ -30,7 +30,7 @@ const menuItems = computed(() => {
       <p class="menu-label">Menú Principal</p>
       <ul class="nav-menu">
         <li v-for="item in menuItems" :key="item.path">
-          <router-link :to="item.path" class="nav-link" active-class="active" exact>
+          <router-link :to="item.path" class="nav-link" exact-active-class="active">
             <span class="icon">{{ item.icon }}</span> {{ item.name }}
           </router-link>
         </li>

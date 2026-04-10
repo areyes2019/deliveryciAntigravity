@@ -13,7 +13,7 @@ const isMobileView = computed(() => {
 </script>
 
 <template>
-  <div id="app" :class="{ 'admin-layout': authStore.isAuthenticated && !isMobileView }">
+  <div id="app">
     <div class="main-wrapper">
       <TopBar v-if="authStore.isAuthenticated && !isMobileView" />
       
@@ -37,9 +37,13 @@ const isMobileView = computed(() => {
   flex-direction: column;
 }
 
+.admin-layout .main-wrapper {
+  /* Removed sidebar margin */
+}
+
 .content-area {
   flex: 1;
-  padding: 1.5rem;
+  padding: 0; /* Changed to 0 for full-width as requested */
   background-color: var(--bg-app);
 }
 

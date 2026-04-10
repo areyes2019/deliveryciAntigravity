@@ -32,8 +32,8 @@ class Auth extends BaseController
             return $this->respondError('Invalid email or password', [], 401);
         }
 
-        if (!$user['is_active']) {
-            return $this->respondError('User account is inactive', [], 403);
+        if ($user['is_suspended'] == 1) {
+            return $this->respondError('Your account has been suspended. Please contact support.', [], 403);
         }
 
         if (!password_verify($password, $user['password'])) {

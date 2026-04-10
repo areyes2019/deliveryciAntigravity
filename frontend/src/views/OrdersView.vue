@@ -31,8 +31,8 @@ const fetchOrders = async () => {
     // Refresh client data to get fresh balance
     const meResponse = await api.get('/auth/me')
     if (meResponse.data.status) {
-        userBalance.value = meResponse.data.data.client_balance || 0
-        tripCost.value = meResponse.data.data.cost_per_trip || 0
+        userBalance.value = parseFloat(meResponse.data.data.client_balance) || 0
+        tripCost.value = parseFloat(meResponse.data.data.cost_per_trip) || 0
     }
   } catch (error) {
     console.error('Error fetching orders:', error)

@@ -113,7 +113,7 @@ class DriverApiController extends BaseController
         $input = $this->request->getJSON(true) ?? $this->request->getPost();
         $newStatus = $input['status'] ?? null;
 
-        $allowedStatuses = ['en_camino', 'entregado'];
+        $allowedStatuses = ['arribado', 'en_camino', 'entregado'];
         if (!in_array($newStatus, $allowedStatuses)) {
             return $this->respondError('Invalid status update.');
         }
@@ -165,5 +165,23 @@ class DriverApiController extends BaseController
         ]);
 
         return $this->respondSuccess('Location updated successfully.');
+    }
+    /**
+     * Get current assigned trip
+     */
+    public function getCurrentTrip()
+    {
+        $userData = $this->request->jwtPayload;
+        $driver = $this->driverModel->where('user_id', $userData['id'])->first();
+
+        if (!$driver) {
+            return $this->respondError('Driver profile not found.', [], 404);
+        }
+
+        $order = $this->orderModel->where('driver_id', $driver['id'])
+                                   ->whereIn('status', ['tomado', 'en_camino'])
+                                   ->first();
+
+        return $this->respondSuccess('Current trip retrieved.', $order);
     }
 }

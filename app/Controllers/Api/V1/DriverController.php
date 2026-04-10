@@ -85,8 +85,7 @@ class DriverController extends BaseController
             'name'      => $input['name'],
             'email'     => $input['email'],
             'password'  => $input['password'],
-            'role'      => 'driver',
-            'is_active' => 1
+            'role'      => 'driver'
         ]);
 
         if (!$userId) {
@@ -100,7 +99,7 @@ class DriverController extends BaseController
             'client_id'       => $client['id'],
             'phone'           => $input['phone'],
             'vehicle_details' => $input['vehicle_details'],
-            'is_suspended'    => 0
+            'is_active'       => 1
         ]);
 
         if (!$driverId) {
@@ -156,8 +155,7 @@ class DriverController extends BaseController
 
         $data = [
             'phone'           => $input['phone'] ?? $driver['phone'],
-            'vehicle_details' => $input['vehicle_details'] ?? $driver['vehicle_details'],
-            'is_suspended'    => $input['is_suspended'] ?? $driver['is_suspended']
+            'vehicle_details' => $input['vehicle_details'] ?? $driver['vehicle_details']
         ];
 
         $driverModel->update($id, $data);
@@ -207,5 +205,48 @@ class DriverController extends BaseController
         }
 
         return $this->respondSuccess('Driver deleted successfully.');
+    }
+
+    public function toggleAvailability()
+    {
+        $userData = $this->request->jwtPayload ?? null;
+        if (!$userData || $userData['role'] !== 'driver') {
+            return $this->respondUnauthorized('Only drivers can toggle their availability.');
+        }
+
+        $userModel = new UserModel();
+        $user = $userModel->find($userData['id']);
+        
+        if (!$user) {
+            return $this->respondError('User profile not found.', [], 404);
+        }
+
+        // Check if user account is administratively suspended
+        if ($user['is_suspended'] == 1) {
+            return $this->respondError('Your account has been suspended by an administrator. Please contact support.', [], 403);
+        }
+
+        $driverModel = new DriverModel();
+        $driver = $driverModel->where('user_id', $userData['id'])->first();
+
+        if (!$driver) {
+            return $this->respondError('Driver profile not found.', [], 404);
+        }
+
+        // Toggle voluntary connection: is_active = 1 means online, 0 means offline
+        $newStatus = $driver['is_active'] == 0 ? 1 : 0;
+        
+        $driverModel->update($driver['id'], [
+            'is_active' => $newStatus
+        ]);
+
+        $updatedDriver = $driverModel->find($driver['id']);
+        
+        $message = $newStatus == 0 ? 'Te has desconectado exitosamente.' : 'Te has conectado exitosamente.';
+        
+        return $this->respondSuccess($message, [
+            'is_active' => $newStatus,
+            'status' => $newStatus == 1 ? 'online' : 'offline'
+        ]);
     }
 }

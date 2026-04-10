@@ -326,19 +326,55 @@ const clearSelection = () => {
     MapService.centerOn([20.5222, -100.8122], 13)
 }
 
+const cancelOrder = async () => {
+    if (!selectedOrder.value) return
+    
+    const orderId = selectedOrder.value.id
+    const confirmCancel = confirm(`¿Estás seguro de que deseas cancelar el viaje #${orderId}?`)
+    
+    if (!confirmCancel) return
+    
+    try {
+        const response = await api.put(`/orders/${orderId}/cancel`)
+        if (response.data.status) {
+            showToast(`Viaje #${orderId} cancelado exitosamente`, 'success')
+            clearSelection()
+            // Refresh the orders list
+            await fetchDashboardData()
+        }
+    } catch (error) {
+        const message = error.response?.data?.message || 'Error al cancelar el viaje'
+        showToast(message, 'error')
+        console.error('Error canceling order:', error)
+    }
+}
+
 onMounted(() => {
     fetchDashboardData()
     
-    // Start Polling (Faster: 2s)
+    // Start Polling (Requested: 3s)
     refreshInterval = setInterval(() => {
         if (role.value === 'client_admin') {
             silentUpdate()
         }
-    }, 2000)
+    }, 3000)
 })
 
 onUnmounted(() => {
     if (refreshInterval) clearInterval(refreshInterval)
+})
+
+// --- Categorized Trip Lists ---
+const pendingOrders = computed(() => {
+    return orders.value.filter(o => o.status === 'publicado')
+})
+
+const activeOrdersList = computed(() => {
+    return orders.value.filter(o => ['tomado', 'en_camino'].includes(o.status))
+})
+
+const activeDrivers = computed(() => {
+    return drivers.value.filter(d => d.is_active != 0)
 })
 </script>
 
@@ -372,7 +408,7 @@ onUnmounted(() => {
       <div class="stat-card">
         <div class="stat-icon orders">📦</div>
         <div class="stat-info">
-          <p class="stat-label">Pedidos Activos</p>
+          <p class="stat-label">Entregas Activas</p>
           <h3 class="stat-value">{{ stats.activeOrders }}</h3>
         </div>
       </div>
@@ -392,26 +428,61 @@ onUnmounted(() => {
             
             <!-- Orders Left Sidebar -->
             <div class="data-sidebar right-border">
-                <div class="sidebar-header">
-                    <h3>Viajes en Cola</h3>
-                    <span class="badge" v-if="stats.activeOrders > 0">{{ stats.activeOrders }} En espera</span>
-                </div>
-                <div class="sidebar-list" v-if="stats.activeOrders > 0">
-                    <div v-for="order in orders.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status))" 
-                         :key="order.id" 
-                         class="order-card"
-                         @click="selectOrder(order)"
-                         :class="{ active: selectedOrder?.id === order.id }">
-                        <div class="order-header">
-                            <span class="id">🚗 Viaje #{{ order.id }}</span>
-                            <span class="time">{{ new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
+                <!-- Pending Trips Section -->
+                <div class="sidebar-section">
+                    <div class="sidebar-header">
+                        <h3>Viajes Pendientes</h3>
+                        <span class="badge pending" v-if="pendingOrders.length > 0">{{ pendingOrders.length }}</span>
+                    </div>
+                    <div class="sidebar-list scrollable">
+                        <div v-if="pendingOrders.length > 0">
+                            <div v-for="order in pendingOrders" 
+                                 :key="order.id" 
+                                 class="order-card pending"
+                                 @click="selectOrder(order)"
+                                 :class="{ active: selectedOrder?.id === order.id }">
+                                <div class="order-header">
+                                    <span class="id">⏳ #{{ order.id }}</span>
+                                    <span class="time">{{ new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
+                                </div>
+                                <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
+                                <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
+                            </div>
                         </div>
-                        <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
-                        <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
+                        <div class="sidebar-empty mini" v-else>
+                            No hay viajes pendientes.
+                        </div>
                     </div>
                 </div>
-                <div class="sidebar-empty" v-else>
-                    No hay viajes en cola por el momento.
+
+                <!-- Active Trips Section -->
+                <div class="sidebar-section" style="border-top: 2px solid #f3f4f6; flex: 1; display: flex; flex-direction: column;">
+                    <div class="sidebar-header">
+                        <h3>Viajes Activos</h3>
+                        <span class="badge active-now" v-if="activeOrdersList.length > 0">{{ activeOrdersList.length }}</span>
+                    </div>
+                    <div class="sidebar-list scrollable" style="flex: 1;">
+                        <div v-if="activeOrdersList.length > 0">
+                            <div v-for="order in activeOrdersList" 
+                                 :key="order.id" 
+                                 class="order-card active-trip"
+                                 @click="selectOrder(order)"
+                                 :class="{ active: selectedOrder?.id === order.id }">
+                                <div class="order-header">
+                                    <span class="id">🏍️ #{{ order.id }}</span>
+                                    <span class="status-tag" :class="order.status">{{ order.status === 'tomado' ? 'Aceptado' : 'En Camino' }}</span>
+                                </div>
+                                <div class="driver-assigned" v-if="order.driver_id">
+                                    <small>Conductor: {{ drivers.find(d => String(d.id) === String(order.driver_id))?.name || 'Asignado' }}</small>
+                                </div>
+                                <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
+                                <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
+                            </div>
+                        </div>
+                        <div class="sidebar-empty mini" v-else>
+                            No hay viajes activos.
+                        </div>
+                    </div>
                 </div>
             </div>
 
@@ -456,6 +527,21 @@ onUnmounted(() => {
                             </div>
                         </div>
 
+                        <div class="receiver-info">
+                            <div class="receiver-item" v-if="selectedOrder.receiver_name">
+                                <span class="label">👤 Nombre de quien recibe</span>
+                                <span class="value">{{ selectedOrder.receiver_name }}</span>
+                            </div>
+                            <div class="receiver-item" v-if="selectedOrder.receiver_phone">
+                                <span class="label">📞 Teléfono</span>
+                                <span class="value">{{ selectedOrder.receiver_phone }}</span>
+                            </div>
+                            <div class="receiver-item" v-if="selectedOrder.description">
+                                <span class="label">📝 Descripción del Paquete</span>
+                                <span class="value">{{ selectedOrder.description }}</span>
+                            </div>
+                        </div>
+
                         <div class="order-meta">
                             <div class="meta-item">
                                 <span class="label">Viaje</span>
@@ -491,8 +577,8 @@ onUnmounted(() => {
                             </div>
                         </div>
 
-                        <button class="btn-primary full-width" @click="$router.push('/orders')">
-                            Ver Seguimiento Completo
+                        <button class="btn-danger full-width" @click="cancelOrder">
+                            Cancelar Viaje
                         </button>
                     </div>
                 </transition>
@@ -502,10 +588,10 @@ onUnmounted(() => {
             <div class="data-sidebar left-border">
                 <div class="sidebar-header">
                     <h3>Flotilla</h3>
-                    <span class="badge" v-if="drivers.length > 0">{{ drivers.length }} Activos</span>
+                    <span class="badge" v-if="activeDrivers.length > 0">{{ activeDrivers.length }} En Línea</span>
                 </div>
-                <div class="sidebar-list" v-if="drivers.length > 0">
-                    <div class="driver-card" v-for="driver in drivers" :key="driver.id" @click="focusDriver(driver)">
+                <div class="sidebar-list" v-if="activeDrivers.length > 0">
+                    <div class="driver-card" v-for="driver in activeDrivers" :key="driver.id" @click="focusDriver(driver)">
                         <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
                         <div class="driver-info">
                             <div class="name-row">
@@ -519,7 +605,7 @@ onUnmounted(() => {
                     </div>
                 </div>
                 <div class="sidebar-empty" v-else>
-                    No hay conductores registrados.
+                    No hay conductores en línea.
                 </div>
             </div>
         </div>
@@ -544,7 +630,16 @@ onUnmounted(() => {
 </template>
 
 <style scoped>
-.dashboard { display: flex; flex-direction: column; gap: 2rem; height: 100%; }
+.dashboard { 
+  display: flex; 
+  flex-direction: column; 
+  height: calc(100vh - var(--topbar-height)); 
+  gap: 0; 
+}
+
+.dashboard-header, .stats-grid {
+  padding: 1.5rem 2rem;
+}
 
 .dashboard-header h1 { font-size: 1.75rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.25rem; }
 .dashboard-header p { color: var(--text-muted); font-size: 0.95rem; }
@@ -565,14 +660,27 @@ onUnmounted(() => {
 .stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text-main); }
 
 /* Map Specific Dashboard Styles */
-.dashboard-map-view { display: flex; flex-direction: column; gap: 1rem; position: relative; height: 100%; min-height: 500px; }
-
-.dashboard-map-container {
-    flex: 1; border-radius: 16px; overflow: hidden; position: relative;
-    border: 1px solid var(--border-light); box-shadow: 0 10px 30px rgba(0,0,0,0.08);
+.dashboard-map-view { 
+  display: flex; 
+  flex-direction: column; 
+  position: relative; 
+  flex: 1;
+  min-height: 0;
 }
 
-#map-root { width: 100%; height: 100%; min-height: 500px; background: #f0f0f0; }
+.dashboard-map-container {
+    flex: 1; 
+    overflow: hidden; 
+    position: relative;
+    border: none;
+    box-shadow: none;
+}
+
+#map-root { 
+  width: 100%; 
+  height: 100%; 
+  background: #f0f0f0; 
+}
 
 .map-controls-top {
     position: absolute; top: 1.5rem; left: 1.5rem; z-index: 100;
@@ -602,13 +710,35 @@ onUnmounted(() => {
 .data-sidebar.left-border { border-left: 1px solid var(--border-light); }
 .data-sidebar.right-border { border-right: 1px solid var(--border-light); }
 
+.sidebar-section {
+    display: flex;
+    flex-direction: column;
+    max-height: 50%;
+}
+
+.sidebar-list.scrollable {
+    overflow-y: auto;
+    scrollbar-width: thin;
+}
+
+.sidebar-list.scrollable::-webkit-scrollbar {
+    width: 6px;
+}
+
+.sidebar-list.scrollable::-webkit-scrollbar-thumb {
+    background: #e2e8f0;
+    border-radius: 10px;
+}
+
 .sidebar-header {
     padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
     display: flex; justify-content: space-between; align-items: center;
 }
 
-.sidebar-header h3 { font-size: 1rem; font-weight: 700; margin: 0; color: #1F2937; }
-.sidebar-header .badge { background: #DCFCE7; color: #166534; padding: 0.2rem 0.5rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; }
+.sidebar-header h3 { font-size: 0.9rem; font-weight: 700; margin: 0; color: #4B5563; text-transform: uppercase; letter-spacing: 0.025em; }
+.sidebar-header .badge { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
+.sidebar-header .badge.pending { background: #FEF3C7; color: #92400E; }
+.sidebar-header .badge.active-now { background: #DBEAFE; color: #1E40AF; }
 
 .sidebar-list {
     flex: 1; overflow-y: auto; display: flex; flex-direction: column;
@@ -647,6 +777,24 @@ onUnmounted(() => {
 }
 .order-card .icon { font-size: 0.7rem; }
 
+.status-tag {
+    font-size: 0.65rem;
+    font-weight: 700;
+    padding: 0.1rem 0.4rem;
+    border-radius: 4px;
+    text-transform: uppercase;
+}
+.status-tag.tomado { background: #D1FAE5; color: #065F46; }
+.status-tag.en_camino { background: #DBEAFE; color: #1E40AF; }
+
+.driver-assigned {
+    margin-top: -0.25rem;
+    color: #6B7280;
+    font-size: 0.75rem;
+}
+
+.sidebar-empty.mini { padding: 1rem; font-size: 0.8rem; }
+
 .sidebar-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
 
 .pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse-animation 2s infinite; }
@@ -673,6 +821,11 @@ onUnmounted(() => {
 .stop-info p.label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 2px; }
 .stop-info p.address { font-size: 0.85rem; font-weight: 500; }
 
+.receiver-info { display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid #F3F4F6; padding-top: 1rem; margin-bottom: 1.5rem; }
+.receiver-item { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.75rem; background: #F9FAFB; border-radius: 8px; border-left: 3px solid #3B82F6; }
+.receiver-item .label { color: var(--text-muted); font-size: 0.8rem; font-weight: 700; }
+.receiver-item .value { font-weight: 500; font-size: 0.9rem; color: var(--text-dark); }
+
 .order-meta { display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid #F3F4F6; padding-top: 1rem; margin-bottom: 1.5rem; }
 .meta-item { display: flex; justify-content: space-between; }
 .meta-item .label { color: var(--text-muted); font-size: 0.85rem; }
@@ -689,6 +842,22 @@ onUnmounted(() => {
 
 .full-width { width: 100%; justify-content: center; }
 
+.btn-primary {
+    background: #6366F1; color: white;
+    padding: 0.75rem 1.5rem; border-radius: 8px; border: none;
+    font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+}
+.btn-primary:hover { background: #4F46E5; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
+.btn-primary:active { transform: translateY(0); }
+
+.btn-danger {
+    background: #EF4444; color: white;
+    padding: 0.75rem 1.5rem; border-radius: 8px; border: none;
+    font-weight: 600; cursor: pointer; transition: all 0.2s ease;
+}
+.btn-danger:hover { background: #DC2626; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
+.btn-danger:active { transform: translateY(0); }
+
 /* Toast System */
 .toast-container {
     position: fixed; top: 1.5rem; right: 1.5rem; 
@@ -702,6 +871,7 @@ onUnmounted(() => {
     animation: slideInLeft 0.3s ease-out;
 }
 .toast-message.success { border-left-color: #10B981; }
+.toast-message.error { border-left-color: #EF4444; }
 
 @keyframes slideInLeft {
     from { transform: translateX(100%); opacity: 0; }
