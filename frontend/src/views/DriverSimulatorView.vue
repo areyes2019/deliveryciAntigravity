@@ -63,7 +63,9 @@ const updateStatus = async (status) => {
         const res = await api.post(`/driver/trips/${activeOrder.value.id}/status`, { status })
         if (res.data.status) {
             activeOrder.value.status = status
-            if (status === 'en_camino') {
+            if (status === 'arribado') {
+                progress.value = 100
+            } else if (status === 'en_camino') {
                 progress.value = 0
                 currentIndex.value = 0
                 loadRoute() // Load Leg 2
@@ -95,7 +97,7 @@ const loadRoute = async () => {
     const SIM_START_LAT = 20.5222;
     const SIM_START_LNG = -100.8122;
 
-    if (activeOrder.value.status === 'tomado') {
+    if (activeOrder.value.status === 'tomado' || activeOrder.value.status === 'arribado') {
         tripPhase.value = 'to_pickup';
         origin = currentPos.value || { lat: SIM_START_LAT, lng: SIM_START_LNG };
         destination = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
@@ -159,7 +161,10 @@ const startSimulation = () => {
     const moveStep = () => {
         if (currentIndex.value >= routePoints.value.length - 1) {
             stopSimulation()
-            // Auto transition to completed or show UI
+            progress.value = 100
+            if (activeOrder.value?.status === 'tomado') {
+                updateStatus('arribado')
+            }
             return
         }
 
@@ -311,7 +316,7 @@ onUnmounted(() => {
         <div v-else class="active-trip-view">
            <div class="active-header">
               <div class="status-badge" :class="activeOrder.status">
-                 {{ activeOrder.status === 'tomado' ? 'ACEPTADO' : (activeOrder.status === 'en_camino' ? 'EN CAMINO' : activeOrder.status.toUpperCase()) }}
+                 {{ activeOrder.status === 'tomado' ? 'ACEPTADO' : (activeOrder.status === 'arribado' ? 'EN RECOGIDA' : (activeOrder.status === 'en_camino' ? 'EN CAMINO' : activeOrder.status.toUpperCase())) }}
               </div>
               <h3>Viaje en Progreso</h3>
            </div>
@@ -333,13 +338,13 @@ onUnmounted(() => {
            </div>
 
            <div class="control-grid">
-              <button 
-                  v-if="activeOrder.status === 'tomado' && progress >= 100" 
-                  @click="updateStatus('en_camino')" 
-                  class="btn-action-mobile pickup"
-              >
-                  Comenzar el Viaje
-              </button>
+               <button 
+                   v-if="activeOrder.status === 'arribado'" 
+                   @click="updateStatus('en_camino')" 
+                   class="btn-action-mobile pickup"
+               >
+                   Comenzar el Viaje
+               </button>
 
               <button 
                   v-if="activeOrder.status === 'en_camino' && progress >= 100" 
@@ -455,6 +460,7 @@ onUnmounted(() => {
 .active-header { text-align: center; margin-bottom: 2rem; }
 .status-badge { display: inline-block; padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.65rem; font-weight: 800; margin-bottom: 0.5rem; }
 .status-badge.tomado { background: #FFB800; color: #000; }
+.status-badge.arribado { background: #3b82f6; color: #fff; }
 .status-badge.en_camino { background: #10b981; color: #fff; }
 
 .active-card { background: #242424; border-radius: 24px; padding: 1.5rem; margin-bottom: 2rem; }

@@ -102,21 +102,7 @@ export default class GoogleProvider extends BaseProvider {
         this.markers.delete(id);
     }
 
-    // Custom SVG icon to display emoji without the red teardrop
-    let customIcon = null;
-    if (options.icon) {
-        if (options.icon.startsWith('http')) {
-            customIcon = options.icon;
-        } else {
-            // Wrap emoji in a scalable SVG text node
-            const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
-            customIcon = {
-                url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-                scaledSize: new google.maps.Size(48, 48),
-                anchor: new google.maps.Point(24, 24)
-            };
-        }
-    }
+    const customIcon = this._normalizeIcon(options.icon);
 
     const marker = new google.maps.Marker({
         position: coords,
@@ -149,16 +135,7 @@ export default class GoogleProvider extends BaseProvider {
       marker.setPosition(coords);
       // Optionally update the icon if provided
       if (options.icon) {
-          if (options.icon.startsWith('http')) {
-              marker.setIcon(options.icon);
-          } else {
-              const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${options.icon}</text></svg>`;
-              marker.setIcon({
-                  url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
-                  scaledSize: new google.maps.Size(48, 48),
-                  anchor: new google.maps.Point(24, 24)
-              });
-          }
+          marker.setIcon(this._normalizeIcon(options.icon));
       }
     } else if (!marker && coords) {
       // Fallback: if marker doesn't exist, create it
@@ -255,6 +232,12 @@ export default class GoogleProvider extends BaseProvider {
     });
   }
 
+  destroy() {
+    this.clearMarkers()
+    this.clearRoutes()
+    this.map = null
+  }
+
   centerOn(position, zoom = null) {
     if (!this.map || typeof google === 'undefined') return;
     const coords = this._parsePosition(position);
@@ -287,5 +270,34 @@ export default class GoogleProvider extends BaseProvider {
         const cLng = parseFloat(lng);
         return (isNaN(cLat) || isNaN(cLng)) ? null : { lat: cLat, lng: cLng };
     } catch (e) { return null; }
+  }
+
+  _normalizeIcon(icon) {
+    if (!icon || typeof google === 'undefined') return null;
+
+    if (typeof icon === 'object' && icon.url) {
+      return {
+        ...icon,
+        scaledSize: icon.scaledSize
+          ? new google.maps.Size(icon.scaledSize.width, icon.scaledSize.height)
+          : undefined,
+        anchor: icon.anchor
+          ? new google.maps.Point(icon.anchor.x, icon.anchor.y)
+          : undefined
+      };
+    }
+
+    if (typeof icon !== 'string') return null;
+
+    if (icon.startsWith('http') || icon.startsWith('data:image/')) {
+      return icon;
+    }
+
+    const svg = `<svg xmlns="http://www.w3.org/2000/svg" width="48" height="48"><text x="0" y="38" font-size="38">${icon}</text></svg>`;
+    return {
+      url: 'data:image/svg+xml;charset=UTF-8,' + encodeURIComponent(svg),
+      scaledSize: new google.maps.Size(48, 48),
+      anchor: new google.maps.Point(24, 24)
+    };
   }
 }

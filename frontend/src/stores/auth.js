@@ -29,13 +29,23 @@ export const useAuthStore = defineStore('auth', {
         return { success: false, message }
       }
     },
-    logout() {
+    async logout() {
+      // Set driver offline before clearing the token (while the API call is still authenticated)
+      if (this.user?.role === 'driver' && this.token) {
+        try {
+          await api.post('/driver/go-offline')
+        } catch (e) {
+          // Non-blocking — proceed with logout even if the call fails
+          console.warn('Could not set driver offline:', e)
+        }
+      }
+
       this.token = null
       this.user = null
       localStorage.removeItem('token')
       localStorage.removeItem('user')
       if (window.location.pathname !== '/login') {
-         window.location.href = '/login'
+        window.location.href = '/login'
       }
     }
   }

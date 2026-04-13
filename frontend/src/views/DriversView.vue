@@ -16,6 +16,17 @@ const form = ref({
   is_suspended: 0
 })
 
+// Wallet Liquidations & History
+const showLiquidationModal = ref(false)
+const showHistoryModal = ref(false)
+const loadingHistory = ref(false)
+const selectedDriverForWallet = ref(null)
+const driverHistory = ref([])
+const liquidationForm = ref({
+  amount: 0,
+  description: ''
+})
+
 const fetchDrivers = async () => {
   loading.value = true
   try {
@@ -92,6 +103,62 @@ const deleteDriver = async (id) => {
   }
 }
 
+const openLiquidationModal = (driver) => {
+  selectedDriverForWallet.value = driver
+  liquidationForm.value = {
+    amount: driver.balance || 0,
+    description: `Liquidación de saldo al ${new Date().toLocaleDateString()}`
+  }
+  showLiquidationModal.value = true
+}
+
+const submitLiquidation = async () => {
+  if (liquidationForm.value.amount <= 0) {
+    alert('El monto debe ser mayor a 0')
+    return
+  }
+  
+  try {
+    const response = await api.post('/wallet/withdraw', {
+      driver_id: selectedDriverForWallet.value.id,
+      amount: liquidationForm.value.amount,
+      description: liquidationForm.value.description
+    })
+    
+    if (response.data.status) {
+      fetchDrivers()
+      showLiquidationModal.value = false
+    }
+  } catch (error) {
+    console.error('Error recording liquidation:', error)
+    alert(error.response?.data?.message || 'Error al registrar la liquidación')
+  }
+}
+
+const openHistoryModal = async (driver) => {
+  selectedDriverForWallet.value = driver
+  showHistoryModal.value = true
+  loadingHistory.value = true
+  driverHistory.value = []
+  
+  try {
+    const response = await api.get(`/wallet/movements/${driver.id}`)
+    if (response.data.status) {
+      driverHistory.value = response.data.data.movements
+    }
+  } catch (error) {
+    console.error('Error fetching driver history:', error)
+  } finally {
+    loadingHistory.value = false
+  }
+}
+
+const formatDate = (dateStr) => {
+  if (!dateStr) return '-'
+  const d = new Date(dateStr)
+  return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
+}
+
 onMounted(fetchDrivers)
 </script>
 
@@ -121,6 +188,7 @@ onMounted(fetchDrivers)
             <th>Contacto</th>
             <th>Vehículo</th>
             <th class="text-center">Estado</th>
+            <th class="text-right">Saldo</th>
             <th class="text-right">Acciones</th>
           </tr>
         </thead>
@@ -149,8 +217,15 @@ onMounted(fetchDrivers)
                 Activo
               </span>
             </td>
+            <td class="text-right">
+              <span class="balance-tag" :class="{ 'has-balance': driver.balance > 0 }">
+                ${{ (driver.balance || 0).toFixed(2) }}
+              </span>
+            </td>
             <td>
               <div class="actions-group">
+                <button class="action-btn history" @click="openHistoryModal(driver)" title="Ver Historial">📋</button>
+                <button class="action-btn wallet" @click="openLiquidationModal(driver)" title="Liquidar Saldo" v-if="driver.balance > 0">💸</button>
                 <button class="action-btn edit" @click="openModal(driver)" title="Editar">✏️</button>
                 <button class="action-btn delete" @click="deleteDriver(driver.id)" title="Eliminar">🗑️</button>
               </div>
@@ -208,6 +283,73 @@ onMounted(fetchDrivers)
             </button>
           </div>
         </form>
+      </div>
+    </div>
+    <!-- Modal de Liquidación -->
+    <div v-if="showLiquidationModal" class="modal-overlay">
+      <div class="modal-content">
+        <div class="modal-header">
+          <h2>Registrar Liquidación</h2>
+          <button @click="showLiquidationModal = false" class="close-btn">&times;</button>
+        </div>
+        <form @submit.prevent="submitLiquidation" class="modal-body">
+          <p class="modal-intro">Registra el pago realizado al conductor <strong>{{ selectedDriverForWallet?.name }}</strong>.</p>
+          
+          <div class="form-group">
+            <label>Monto a Liquidar ($)</label>
+            <input v-model="liquidationForm.amount" type="number" step="0.01" required>
+            <small>Saldo actual: ${{ selectedDriverForWallet?.balance.toFixed(2) }}</small>
+          </div>
+          
+          <div class="form-group">
+            <label>Descripción / Referencia</label>
+            <textarea v-model="liquidationForm.description" placeholder="Ej. Pago semana 14, transferencia bancaria..."></textarea>
+          </div>
+
+          <div class="modal-footer">
+            <button type="button" @click="showLiquidationModal = false" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-primary">Registrar Pago</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- Modal de Historial de Movimientos -->
+    <div v-if="showHistoryModal" class="modal-overlay">
+      <div class="modal-content history-modal">
+        <div class="modal-header">
+          <h2>Historial: {{ selectedDriverForWallet?.name }}</h2>
+          <button @click="showHistoryModal = false" class="close-btn">&times;</button>
+        </div>
+        <div class="modal-body">
+          <div v-if="loadingHistory" class="loading-state">
+            <div class="spinner"></div>
+            <p>Cargando movimientos...</p>
+          </div>
+          <div v-else-if="driverHistory.length > 0" class="history-list">
+            <div v-for="move in driverHistory" :key="move.id" class="history-item">
+              <div class="move-type-icon" :class="move.type">
+                {{ move.type === 'ingreso' ? '📈' : (move.type === 'retiro' ? '📉' : '⚙️') }}
+              </div>
+              <div class="move-main">
+                <div class="move-desc">
+                  {{ move.description || (move.type === 'ingreso' ? 'Ingreso por viaje' : 'Movimiento') }}
+                  <span v-if="move.reference_id" class="ref-tag">#{{ move.reference_id }}</span>
+                </div>
+                <div class="move-date">{{ formatDate(move.created_at) }}</div>
+              </div>
+              <div class="move-val" :class="{ 'pos': move.amount > 0, 'neg': move.amount < 0 }">
+                {{ move.amount > 0 ? '+' : '' }}{{ move.amount.toFixed(2) }}
+              </div>
+            </div>
+          </div>
+          <div v-else class="empty-history">
+            No hay movimientos registrados para este conductor.
+          </div>
+        </div>
+        <div class="modal-footer">
+          <button @click="showHistoryModal = false" class="btn-secondary">Cerrar</button>
+        </div>
       </div>
     </div>
   </div>
@@ -327,6 +469,19 @@ onMounted(fetchDrivers)
   color: #991B1B;
 }
 
+.balance-tag {
+  font-weight: 700;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+.balance-tag.has-balance {
+  color: #166534;
+  background: #DCFCE7;
+  padding: 0.25rem 0.5rem;
+  border-radius: 6px;
+}
+
 /* Actions */
 .actions-group {
   display: flex;
@@ -428,6 +583,83 @@ onMounted(fetchDrivers)
 }
 
 .form-group input:focus { border-color: var(--primary); }
+
+.form-group textarea {
+  width: 100%;
+  padding: 0.75rem;
+  border: 1px solid var(--border-light);
+  border-radius: 8px;
+  outline: none;
+  min-height: 80px;
+  font-family: inherit;
+}
+
+.modal-intro {
+  margin-bottom: 1.5rem;
+  font-size: 0.95rem;
+  color: var(--text-muted);
+}
+
+/* History Modal Specifics */
+.history-modal {
+  max-width: 500px !important;
+}
+
+.history-list {
+  max-height: 400px;
+  overflow-y: auto;
+  padding-right: 0.5rem;
+}
+
+.history-item {
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 1rem;
+  background: #F9FAFB;
+  border-radius: 12px;
+  margin-bottom: 0.75rem;
+  border: 1px solid #F3F4F6;
+}
+
+.move-type-icon {
+  width: 40px;
+  height: 40px;
+  border-radius: 10px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  font-size: 1.2rem;
+  flex-shrink: 0;
+}
+
+.move-type-icon.ingreso { background: #DCFCE7; }
+.move-type-icon.retiro { background: #FEE2E2; }
+.move-type-icon.ajuste { background: #E0E7FF; }
+
+.move-main { flex: 1; }
+.move-desc { font-weight: 600; font-size: 0.9rem; color: #111827; margin-bottom: 0.2rem; }
+.move-date { font-size: 0.75rem; color: #6B7280; }
+.move-val { font-weight: 700; font-size: 1rem; }
+.move-val.pos { color: #16A34A; }
+.move-val.neg { color: #DC2626; }
+
+.ref-tag {
+  background: #E5E7EB;
+  color: #374151;
+  padding: 0.1rem 0.4rem;
+  border-radius: 4px;
+  font-size: 0.7rem;
+  margin-left: 0.4rem;
+}
+
+.loading-state, .empty-history {
+  padding: 3rem 1rem;
+  text-align: center;
+  color: #6B7280;
+}
+
+.loading-state .spinner { margin: 0 auto 1rem; }
 
 .checkbox-group {
   display: flex;

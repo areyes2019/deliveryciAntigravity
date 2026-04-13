@@ -7,6 +7,7 @@ use App\Models\ClientModel;
 use App\Models\PricingZoneModel;
 use App\Services\PricingService;
 use App\Services\ZoneMatrixService;
+use App\Helpers\GeoHelper;
 use App\Traits\ApiResponseTrait;
 
 class PricingController extends BaseController
@@ -29,7 +30,7 @@ class PricingController extends BaseController
 
         $data = $this->request->getJSON(true) ?? $this->request->getPost();
 
-        $allowedFields = ['pricing_mode', 'base_fare', 'price_per_km', 'cost_per_trip'];
+        $allowedFields = ['pricing_mode', 'base_fare', 'price_per_km', 'min_distance_km', 'cost_per_trip'];
         $updateData = [];
 
         foreach ($allowedFields as $field) {
@@ -88,19 +89,18 @@ class PricingController extends BaseController
         }
 
         $zoneModel = new PricingZoneModel();
-        
+
         $insertData = [
-            'client_id' => $client['id'],
-            'name' => $data['name'],
-            'polygon_coordinates' => is_array($data['polygon_coordinates']) ? json_encode($data['polygon_coordinates']) : $data['polygon_coordinates'],
-            'base_price' => $data['base_price']
+            'client_id'           => $client['id'],
+            'name'                => $data['name'],
+            'polygon_coordinates' => is_array($data['polygon_coordinates'])
+                                        ? json_encode($data['polygon_coordinates'])
+                                        : $data['polygon_coordinates'],
+            'base_price'      => (float)($data['base_price']      ?? 0),
+            'increment_price' => (float)($data['increment_price'] ?? 0),
         ];
 
         $zoneModel->insert($insertData);
-
-        // Rebuild pricing matrix to include all new zone combinations
-        $matrixService = new ZoneMatrixService();
-        $matrixService->rebuildMatrix($client['id']);
 
         return $this->respondSuccess('Zone created successfully');
     }
@@ -147,15 +147,20 @@ class PricingController extends BaseController
              return $this->respondError('Missing coordinates');
         }
 
-        // Mock distance service for preview
-        $distanceService = new \App\Services\MockDistanceMatrixService();
-        $distanceKm = 0;
-        if (isset($data['pickup_address']) && isset($data['drop_address'])) {
-            $distanceKm = $distanceService->getDistanceInKm($data['pickup_address'], $data['drop_address']);
+        // Prefer the real route distance sent by the frontend (Google Directions).
+        // Fall back to haversine when it is absent.
+        if (!empty($data['distance_km']) && (float)$data['distance_km'] > 0) {
+            $distanceKm = (float)$data['distance_km'];
+            $distanceSource = 'route';
         } else {
-             // Basic haversine if addresses not provided
-             $distanceKm = 5; // fallback
+            $distanceKm = GeoHelper::haversineDistance(
+                ['lat' => (float)$data['pickup_lat'], 'lng' => (float)$data['pickup_lng']],
+                ['lat' => (float)$data['drop_lat'],   'lng' => (float)$data['drop_lng']]
+            ) / 1000.0;
+            $distanceSource = 'haversine';
         }
+
+        log_message('info', "[PricingController] preview distanceKm={$distanceKm} source={$distanceSource}");
 
         $pricingService = new PricingService();
         $result = $pricingService->calculatePrice(
@@ -174,3 +179,4 @@ class PricingController extends BaseController
         return $this->respondSuccess('Price calculated', $result);
     }
 }
+

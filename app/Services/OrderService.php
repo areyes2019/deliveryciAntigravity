@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
 use App\Models\ClientModel;
+use App\Helpers\GeoHelper;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
 
@@ -14,7 +15,6 @@ class OrderService
     private OrderModel $orderModel;
     private OrderStatusLogModel $statusLogModel;
     private CreditService $creditService;
-    private MockDistanceMatrixService $distanceService;
 
     public function __construct()
     {
@@ -22,7 +22,6 @@ class OrderService
         $this->orderModel = new OrderModel();
         $this->statusLogModel = new OrderStatusLogModel();
         $this->creditService = new CreditService();
-        $this->distanceService = new MockDistanceMatrixService();
     }
 
     public function createOrder(int $clientId, array $data): array
@@ -43,7 +42,20 @@ class OrderService
             ];
         }
 
-        $distanceKm = $this->distanceService->getDistanceInKm($data['pickup_address'], $data['drop_address']);
+        // Prefer the real route distance sent by the frontend (Google Directions).
+        // Fall back to haversine when it is absent (e.g. API calls without a map).
+        if (!empty($data['distance_km']) && (float)$data['distance_km'] > 0) {
+            $distanceKm = (float)$data['distance_km'];
+            $distanceSource = 'route';
+        } else {
+            $distanceKm = GeoHelper::haversineDistance(
+                ['lat' => (float)$data['pickup_lat'], 'lng' => (float)$data['pickup_lng']],
+                ['lat' => (float)$data['drop_lat'],   'lng' => (float)$data['drop_lng']]
+            ) / 1000.0;
+            $distanceSource = 'haversine';
+        }
+
+        log_message('info', "[OrderService] distanceKm={$distanceKm} source={$distanceSource} pickup=({$data['pickup_lat']},{$data['pickup_lng']}) drop=({$data['drop_lat']},{$data['drop_lng']})");
         
         $pricingService = new PricingService();
         $priceResult = $pricingService->calculatePrice($clientId, (float)$data['pickup_lat'], (float)$data['pickup_lng'], (float)$data['drop_lat'], (float)$data['drop_lng'], $distanceKm);

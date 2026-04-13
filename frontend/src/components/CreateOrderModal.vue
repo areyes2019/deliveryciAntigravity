@@ -7,6 +7,8 @@ const emit = defineEmits(['close', 'created'])
 
 const userBalance = ref(0)
 const calculatedPrice = ref(0)
+const routeDistance = ref('')
+const routeTime = ref('')
 const outOfZoneError = ref('')
 const submitting = ref(false)
 
@@ -27,7 +29,8 @@ const form = ref({
   pickup_lat: null,
   pickup_lng: null,
   drop_lat: null,
-  drop_lng: null
+  drop_lng: null,
+  distance_km: null
 })
 
 // ─── Template refs for the two address inputs ───────────────────────────────
@@ -181,14 +184,16 @@ watch(
     if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
         // Fetch price preview
         api.post('/calculate-price', {
-            pickup_lat: pLat, pickup_lng: pLng, 
+            pickup_lat: pLat, pickup_lng: pLng,
             drop_lat: dLat, drop_lng: dLng,
             pickup_address: form.value.pickup_address,
-            drop_address: form.value.drop_address
+            drop_address: form.value.drop_address,
+            distance_km: form.value.distance_km
         }).then(res => {
             if (res.data.status) {
                 calculatedPrice.value = res.data.data.price;
                 outOfZoneError.value = '';
+                console.log('[pricing] breakdown:', res.data.data.breakdown);
             }
         }).catch(err => {
             calculatedPrice.value = 0;
@@ -200,6 +205,8 @@ watch(
     } else {
         calculatedPrice.value = 0;
         outOfZoneError.value = '';
+        routeDistance.value = '';
+        routeTime.value = '';
     }
 
     // Directions Service for Actual Route
@@ -230,8 +237,16 @@ watch(
         }, (response, status) => {
             if (status === 'OK') {
                 directionsRenderer.setDirections(response);
+                const leg = response.routes[0].legs[0];
+                routeDistance.value = leg.distance.text;
+                routeTime.value = leg.duration.text;
+                // Capture numeric km for backend pricing (leg.distance.value is metres)
+                form.value.distance_km = leg.distance.value / 1000;
             } else {
                 console.warn('No se pudo calcular la ruta real (' + status + ').');
+                routeDistance.value = '';
+                routeTime.value = '';
+                form.value.distance_km = null;
             }
         });
     }
@@ -431,6 +446,13 @@ onMounted(async () => {
                <span>⚠️ {{ outOfZoneError }}</span>
             </div>
             <template v-else>
+              <div class="summary-row" v-if="routeDistance || routeTime">
+                <span class="summary-meta">
+                  <span v-if="routeDistance">🗺️ {{ routeDistance }}</span>
+                  <span v-if="routeDistance && routeTime" class="meta-sep">·</span>
+                  <span v-if="routeTime">⏱️ {{ routeTime }}</span>
+                </span>
+              </div>
               <div class="summary-row">
                 <span>Costo del Envío</span>
                 <span class="summary-cost">${{ calculatedPrice.toFixed(2) }} MXN</span>
@@ -566,7 +588,9 @@ onMounted(async () => {
   display: flex; flex-direction: column; gap: 0.5rem;
   margin-top: 0.5rem;
 }
-.summary-row { display: flex; justify-content: space-between; font-size: 0.9rem; }
+.summary-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
+.summary-meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #6B7280; font-weight: 500; }
+.meta-sep { color: #D1D5DB; }
 .summary-row.total { background: #EFF6FF; border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.25rem; }
 .summary-cost { font-weight: 700; color: #6366F1; font-size: 1rem; }
 .summary-cost.highlight { color: #059669; font-size: 1.05rem; }

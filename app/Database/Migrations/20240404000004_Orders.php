@@ -61,7 +61,7 @@ class Orders extends Migration
             ],
             'status' => [
                 'type'       => 'ENUM',
-                'constraint' => ['pendiente', 'publicado', 'tomado', 'en_camino', 'entregado', 'rechazado', 'cancelado'],
+                'constraint' => ['pendiente', 'publicado', 'tomado', 'arribado', 'en_camino', 'entregado', 'rechazado', 'cancelado'],
                 'default'    => 'pendiente',
             ],
             'payment_type' => [

@@ -37,6 +37,14 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->put('drivers/(:num)', 'DriverController::update/$1', ['filter' => 'jwt:client_admin']);
     $routes->delete('drivers/(:num)', 'DriverController::delete/$1', ['filter' => 'jwt:client_admin']);
 
+    // Wallet
+    $routes->group('wallet', ['filter' => 'jwt:superadmin'], function($routes) {
+        $routes->post('withdraw', 'WalletController::withdraw');
+        $routes->post('add-income', 'WalletController::addIncome');
+    });
+    $routes->get('wallet/balance/(:num)', 'WalletController::getBalance/$1', ['filter' => 'jwt:superadmin,driver']);
+    $routes->get('wallet/movements/(:num)', 'WalletController::getMovements/$1', ['filter' => 'jwt:superadmin,driver']);
+
     $routes->group('driver', ['filter' => 'jwt:driver'], function($routes) {
         $routes->get('trips/available', 'Driver\DriverApiController::availableTrips');
         $routes->get('trips/current', 'Driver\DriverApiController::getCurrentTrip');
@@ -44,6 +52,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
         $routes->post('trips/(:num)/status', 'Driver\DriverApiController::updateStatus/$1');
         $routes->post('location', 'Driver\DriverApiController::updateLocation');
         $routes->post('toggle-availability', 'DriverController::toggleAvailability');
+        $routes->post('go-offline', 'DriverController::goOffline');
     });
 
     $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept

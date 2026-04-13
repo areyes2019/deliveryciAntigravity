@@ -13,7 +13,11 @@ class JwtLibrary
     public function __construct()
     {
         $this->secretKey = config('Encryption')->key ?: 'delivery_ci4_super_secret_key_32_chars_long_12345';
-        $this->expirationHours = 24; // Validez según entorno
+
+        $configuredHours = env('jwt.expirationHours');
+        $configuredHours = is_numeric($configuredHours) ? (int) $configuredHours : 720;
+
+        $this->expirationHours = max(1, $configuredHours);
     }
 
     /**

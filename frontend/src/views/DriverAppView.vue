@@ -2,58 +2,71 @@
 import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import MapService from '../services/maps/MapService'
 import api from '../api'
+import { useAuthStore } from '../stores/auth'
+import DriverStatusToggle from '../components/DriverStatusToggle.vue'
+import ModeToggle from '../components/ModeToggle.vue'
+
+const authStore = useAuthStore()
 
 // --- State ---
 const availableOrders = ref([])
 const activeOrder = ref(null)
 const isLoading = ref(false)
 const mapLoading = ref(true)
-const showNavModal = ref(false)
-const navPreference = ref(localStorage.getItem('nav_preference') || null)
-const tripCompletedMessage = ref('')
+const statusError = ref('')
+const showRouteDetail = ref(false)
 
-// --- Navigation Helper ---
-const openNavigation = (provider = null) => {
-    if (!activeOrder.value) return;
-    
-    // If provider is explicitly passed, save it as preference
-    if (provider) {
-        navPreference.value = provider;
-        localStorage.setItem('nav_preference', provider);
-        showNavModal.value = false;
-    }
+// Driver online/offline status
+const isDriverOnline = ref(false)
+const isTogglingStatus = ref(false)
 
-    // Use saved preference if available, otherwise show modal
-    const selectedProvider = navPreference.value;
-    
-    if (!selectedProvider) {
-        showNavModal.value = true;
-        return;
-    }
+// Today's earnings
+const todayEarnings = ref(0)
+const todayTrips = ref(0)
+let earningsInterval = null
 
-    // If driver chooses to navigate on their own, don't open external navigation
-    if (selectedProvider === 'self-navigate') {
-        return;
-    }
+// Coin animation refs
+const walletChipRef = ref(null)
+const completeButtonRef = ref(null)
+const walletBounce = ref(false)
 
-    // Determine target coordinates based on current status
-    // "tomado" or "arribado" means we need to go to PICKUP
-    // "en_camino" means we need to go to DROP-OFF
-    const isToPickup = activeOrder.value.status === 'tomado' || activeOrder.value.status === 'arribado';
-    const lat = isToPickup ? activeOrder.value.pickup_lat : activeOrder.value.drop_lat;
-    const lng = isToPickup ? activeOrder.value.pickup_lng : activeOrder.value.drop_lng;
-
-    let url = '';
-    if (selectedProvider === 'google') {
-        url = `https://www.google.com/maps/dir/?api=1&destination=${lat},${lng}`;
-    } else if (selectedProvider === 'waze') {
-        url = `https://waze.com/ul?ll=${lat},${lng}&navigate=yes`;
-    }
-
-    if (url) {
-        window.open(url, '_blank');
+const fetchTodayEarnings = async () => {
+    const driverId = authStore.user?.driver?.id
+    if (!driverId) return
+    try {
+        const res = await api.get(`/wallet/movements/${driverId}`)
+        if (res.data.status) {
+            const today = new Date().toISOString().split('T')[0]
+            const todayIncome = (res.data.data.movements || []).filter(m =>
+                m.type === 'ingreso' && m.created_at?.startsWith(today)
+            )
+            todayEarnings.value = todayIncome.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0)
+            todayTrips.value = todayIncome.length
+        }
+    } catch (e) {
+        console.warn('No se pudieron cargar las ganancias del día:', e)
     }
 }
+
+const toggleDriverStatus = async () => {
+    isTogglingStatus.value = true
+    try {
+        const res = await api.post('/driver/toggle-availability')
+        if (res.data.status) {
+            isDriverOnline.value = res.data.data.is_active === 1
+        }
+    } catch (e) {
+        console.error('Error toggling driver status:', e)
+    } finally {
+        isTogglingStatus.value = false
+    }
+}
+
+// Live / Simulator mode
+const modeValue = computed({
+    get: () => isSimulatorMode.value ? 'simulator' : 'live',
+    set: (val) => { if ((val === 'simulator') !== isSimulatorMode.value) toggleSimulatorMode() }
+})
 
 // Simulation & Real Mode State
 const isSimulatorMode = ref(false) // <--- MODE TOGGLE
@@ -65,18 +78,60 @@ const speedKmh = ref(60) // Default 60km/h
 const routePoints = ref([])
 const currentIndex = ref(0)
 const progress = ref(0)
-const isAvailable = ref(true) // Availability/Connection status
-const showMenu = ref(false) // Settings menu toggle
 let simInterval = null
 let pollInterval = null
 let locationWatchId = null
-let locationSyncInterval = null
-let simSyncInterval = null
 let lastSyncTime = 0
+
+// --- Auto-arrival at pickup ---
+const arrivedAtPickup = ref(false)
+const showArrivalToast = ref(false)
+let arrivalToastTimer = null
+
+// Haversine distance in metres between two {lat, lng} points
+const distanceMeters = (a, b) => {
+    const R = 6371000
+    const dLat = (b.lat - a.lat) * Math.PI / 180
+    const dLng = (b.lng - a.lng) * Math.PI / 180
+    const x = Math.sin(dLat / 2) ** 2
+        + Math.cos(a.lat * Math.PI / 180) * Math.cos(b.lat * Math.PI / 180)
+        * Math.sin(dLng / 2) ** 2
+    return R * 2 * Math.atan2(Math.sqrt(x), Math.sqrt(1 - x))
+}
+
+const handlePickupArrival = async () => {
+    if (arrivedAtPickup.value) return           // fire only once
+    arrivedAtPickup.value = true
+
+    // Show toast
+    showArrivalToast.value = true
+    if (arrivalToastTimer) clearTimeout(arrivalToastTimer)
+    arrivalToastTimer = setTimeout(() => { showArrivalToast.value = false }, 4000)
+
+    // Auto-transition backend status
+    await updateStatus('arribado')
+}
+
+// Simulator: watch progress — trigger arrival when to_pickup route finishes
+watch(progress, (val) => {
+    if (
+        val >= 100 &&
+        tripPhase.value === 'to_pickup' &&
+        activeOrder.value?.status === 'tomado' &&
+        !arrivedAtPickup.value
+    ) {
+        handlePickupArrival()
+    }
+})
 
 // --- Computed ---
 const canStart = computed(() => activeOrder.value && routePoints.value.length > 0 && !isSimulating.value)
 const canPause = computed(() => isSimulating.value)
+
+const avatarUrl = computed(() => {
+    const name = (authStore.userName || 'Driver').replace(' ', '+')
+    return `https://ui-avatars.com/api/?name=${name}&background=3B82F6&color=fff&bold=true`
+})
 
 // --- Methods ---
 
@@ -92,45 +147,15 @@ const loadAvailableOrders = async () => {
     }
 }
 
-const syncCurrentTrip = async () => {
-    // Try to load from localStorage first for immediate UI
-    const cached = localStorage.getItem('active_trip')
-    if (cached && !activeOrder.value) {
-        activeOrder.value = JSON.parse(cached)
-        loadRoute()
-    }
-
-    try {
-        const res = await api.get('/driver/trips/current')
-        if (res.data.status && res.data.data) {
-            activeOrder.value = res.data.data
-            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
-            loadRoute()
-        } else {
-            // No active trip found in backend, clear local state
-            activeOrder.value = null
-            localStorage.removeItem('active_trip')
-        }
-    } catch (e) {
-        console.error('Error syncing current trip:', e)
-    }
-}
-
 const acceptOrder = async (order) => {
     if (activeOrder.value) return
     try {
         const res = await api.post(`/driver/trips/${order.id}/accept`)
         if (res.data.status) {
             activeOrder.value = res.data.data
-            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
             progress.value = 0
+            arrivedAtPickup.value = false
             loadRoute()
-            showNavModal.value = true
-            
-            // Ensure tracking is active after accepting order
-            if (!isSimulatorMode.value && !locationSyncInterval) {
-                startRealTracking()
-            }
         }
     } catch (e) {
         alert(e.response?.data?.message || 'Error al aceptar el viaje')
@@ -139,34 +164,24 @@ const acceptOrder = async (order) => {
 
 const updateStatus = async (status) => {
     if (!activeOrder.value) return
+    statusError.value = ''
     try {
         const res = await api.post(`/driver/trips/${activeOrder.value.id}/status`, { status })
         if (res.data.status) {
             activeOrder.value.status = status
-            localStorage.setItem('active_trip', JSON.stringify(activeOrder.value))
-            
-            // Force immediate location sync when status changes
-            syncLocation()
-            
-            // Ensure tracking is active after status change
-            if (!isSimulatorMode.value && !locationSyncInterval) {
-                startRealTracking()
-            }
-            
-            if (status === 'en_camino') {
+            if (status === 'arribado') {
+                // Arrived at pickup — stay on current route, stop simulation if running
+                stopSimulation()
                 progress.value = 0
                 currentIndex.value = 0
-                loadRoute() // Load Leg 2
-                // Trigger auto-navigation to destination
-                openNavigation();
+            } else if (status === 'en_camino') {
+                // Start delivery — reload route toward dropoff
+                progress.value = 0
+                currentIndex.value = 0
+                loadRoute()
             } else if (status === 'entregado') {
                 stopSimulation()
                 activeOrder.value = null
-                localStorage.removeItem('active_trip');
-                
-                // Clear any navigation-related session state if needed
-                // But keep navPreference for future trips
-                
                 routePoints.value = []
                 currentIndex.value = 0
                 progress.value = 0
@@ -174,13 +189,11 @@ const updateStatus = async (status) => {
                 loadAvailableOrders()
                 MapService.clearRoutes()
                 MapService.clearMarkers()
-
-                // Show completion message
-                tripCompletedMessage.value = "Viaje completado. Ya puedes cerrar tu aplicación de navegación."
-                setTimeout(() => { tripCompletedMessage.value = '' }, 5000)
+                fetchTodayEarnings()
             }
         }
     } catch (e) {
+        statusError.value = e.response?.data?.message || 'Error al actualizar el estado del viaje'
         console.error('Error updating status:', e)
     }
 }
@@ -190,35 +203,27 @@ const updateStatus = async (status) => {
 const loadRoute = async () => {
     if (!activeOrder.value) return
 
-    let origin, destination;
-    
-    // Origin fallback if driver GPS isn't set
-    const FALLBACK_LAT = 20.5222;
-    const FALLBACK_LNG = -100.8122;
+    let origin, destination
+    const FALLBACK_LAT = 20.5222
+    const FALLBACK_LNG = -100.8122
 
     if (activeOrder.value.status === 'tomado' || activeOrder.value.status === 'arribado') {
-        tripPhase.value = 'to_pickup';
-        origin = currentPos.value || { lat: FALLBACK_LAT, lng: FALLBACK_LNG };
-        destination = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
+        tripPhase.value = 'to_pickup'
+        origin = currentPos.value || { lat: FALLBACK_LAT, lng: FALLBACK_LNG }
+        destination = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) }
     } else {
-        tripPhase.value = 'to_dropoff';
-        origin = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
-        destination = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) };
+        tripPhase.value = 'to_dropoff'
+        origin = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) }
+        destination = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) }
     }
 
     const directionsService = new google.maps.DirectionsService()
-    
-    directionsService.route({
-        origin: origin,
-        destination: destination,
-        travelMode: google.maps.TravelMode.DRIVING
-    }, (result, status) => {
+    directionsService.route({ origin, destination, travelMode: google.maps.TravelMode.DRIVING }, (result, status) => {
         if (status === 'OK') {
             const path = result.routes[0].overview_path
             routePoints.value = path.map(p => ({ lat: p.lat(), lng: p.lng() }))
         } else {
-            console.warn('Google Directions failed, using straight line fallback.');
-            routePoints.value = [origin, destination];
+            routePoints.value = [origin, destination]
         }
 
         if (isSimulatorMode.value) {
@@ -226,974 +231,672 @@ const loadRoute = async () => {
             currentPos.value = routePoints.value[0]
         }
 
-        // Draw the route
         MapService.drawRoute('app-route', routePoints.value, { fitBounds: false })
-        
-        // Draw static targets
-        const pickupCoords = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) };
-        const dropoffCoords = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) };
-        
-        // Important Map Bug Fix: Ensure drop_lat and drop_lng exist and are valid numbers before placing marker
-        if (!isNaN(pickupCoords.lat) && !isNaN(pickupCoords.lng)) {
-            MapService.updateMarker('app-pickup', pickupCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png', popup: `<b>Origen:</b><br>${activeOrder.value.pickup_address}` });
-        }
-        
-        if (!isNaN(dropoffCoords.lat) && !isNaN(dropoffCoords.lng)) {
-            console.log("Setting Dropoff Marker at", dropoffCoords);
-            // Delay slightly to ensure directionsRenderer doesn't overwrite it contextually
-            setTimeout(() => {
-                MapService.updateMarker('app-dropoff', dropoffCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png', popup: `<b>Destino:</b><br>${activeOrder.value.drop_address}` });
-            }, 100);
-        }
 
+        const pickupCoords = { lat: parseFloat(activeOrder.value.pickup_lat), lng: parseFloat(activeOrder.value.pickup_lng) }
+        const dropoffCoords = { lat: parseFloat(activeOrder.value.drop_lat), lng: parseFloat(activeOrder.value.drop_lng) }
+
+        if (!isNaN(pickupCoords.lat) && !isNaN(pickupCoords.lng)) {
+            MapService.updateMarker('app-pickup', pickupCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png', popup: `<b>Origen:</b><br>${activeOrder.value.pickup_address}` })
+        }
+        if (!isNaN(dropoffCoords.lat) && !isNaN(dropoffCoords.lng)) {
+            setTimeout(() => {
+                MapService.updateMarker('app-dropoff', dropoffCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png', popup: `<b>Destino:</b><br>${activeOrder.value.drop_address}` })
+            }, 100)
+        }
         if (currentPos.value) {
             MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
             MapService.fitToPoints([currentPos.value, pickupCoords, dropoffCoords].filter(p => !isNaN(p.lat)))
         }
 
         syncLocation()
-
-        if (isSimulatorMode.value) {
-            startSimulation()
-        }
+        if (isSimulatorMode.value) startSimulation()
     })
 }
 
 // --- Real GPS Tracking ---
 
 const startRealTracking = () => {
-    if (!('geolocation' in navigator)) {
-        console.warn('Geolocation is not supported by this browser.')
-        return
-    }
-
-    // Watch position for real-time location updates (visual rendering)
+    if (!('geolocation' in navigator)) return
     locationWatchId = navigator.geolocation.watchPosition(
         (position) => {
-            const newPos = {
-                lat: position.coords.latitude,
-                lng: position.coords.longitude
-            };
-            currentPos.value = newPos;
-            
-            // Render driver position immediately
-            MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' });
-        },
-        (error) => {
-            console.error('Error watching location:', error);
-        },
-        {
-            enableHighAccuracy: true,
-            maximumAge: 0,
-            timeout: 5000
-        }
-    );
+            const newPos = { lat: position.coords.latitude, lng: position.coords.longitude }
+            currentPos.value = newPos
+            MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
+            const now = Date.now()
+            if (now - lastSyncTime > 2000) { syncLocation(); lastSyncTime = now }
 
-    // Sync location to backend every 3 seconds (as requested)
-    // This is independent of position changes, ensuring consistent updates
-    locationSyncInterval = setInterval(() => {
-        syncLocation();
-    }, 3000);
-};
+            // Auto-detect arrival at pickup (within 80 m)
+            if (activeOrder.value?.status === 'tomado' && !arrivedAtPickup.value) {
+                const pickup = {
+                    lat: parseFloat(activeOrder.value.pickup_lat),
+                    lng: parseFloat(activeOrder.value.pickup_lng)
+                }
+                if (!isNaN(pickup.lat) && distanceMeters(newPos, pickup) < 80) {
+                    handlePickupArrival()
+                }
+            }
+        },
+        (error) => { console.error('Error watching location:', error) },
+        { enableHighAccuracy: true, maximumAge: 0, timeout: 5000 }
+    )
+}
 
 // --- Simulator Tracking ---
 
 const startSimulation = () => {
     if (!isSimulatorMode.value || isSimulating.value) return
     isSimulating.value = true
-    
-    // Smooth interpolation logic
     const moveStep = () => {
-        if (currentIndex.value >= routePoints.value.length - 1) {
-            stopSimulation()
-            // Auto transition to completed or show UI
-            return
-        }
-
+        if (currentIndex.value >= routePoints.value.length - 1) { stopSimulation(); return }
         currentIndex.value++
         currentPos.value = routePoints.value[currentIndex.value]
-        
-        // Update Marker
         MapService.updateMarker('app-driver', currentPos.value, { icon: '🏍️' })
-        
+        const now = Date.now()
+        if (now - lastSyncTime > 1500) { syncLocation(); lastSyncTime = now }
         progress.value = Math.round((currentIndex.value / (routePoints.value.length - 1)) * 100)
     }
-
     const intervalMs = Math.max(100, 1000 - (speedKmh.value * 8))
     simInterval = setInterval(moveStep, intervalMs)
-
-    // Sync location to backend every 3 seconds (consistent with real tracking)
-    simSyncInterval = setInterval(() => {
-        syncLocation();
-    }, 3000);
 }
 
-const pauseSimulation = () => {
-    isSimulating.value = false
-    if (simInterval) clearInterval(simInterval)
-}
-
-const stopSimulation = () => {
-    pauseSimulation()
-    if (simSyncInterval) {
-        clearInterval(simSyncInterval);
-        simSyncInterval = null;
-    }
-}
-
-const stopRealTracking = () => {
-    if (locationWatchId) {
-        navigator.geolocation.clearWatch(locationWatchId);
-        locationWatchId = null;
-    }
-    if (locationSyncInterval) {
-        clearInterval(locationSyncInterval);
-        locationSyncInterval = null;
-    }
-}
+const pauseSimulation = () => { isSimulating.value = false; if (simInterval) clearInterval(simInterval) }
+const stopSimulation = () => { pauseSimulation() }
 
 const syncLocation = async () => {
     if (!currentPos.value) return
     try {
-        await api.post('/driver/location', {
-            lat: currentPos.value.lat,
-            lng: currentPos.value.lng
-        })
-    } catch (e) {
-        console.warn('Sync failed:', e)
-    }
-}
-
-const toggleAvailability = async () => {
-    const confirmToggle = confirm(
-        isAvailable.value 
-            ? '¿Desconectarte de la plataforma? No recibirás nuevos viajes.'
-            : '¿Conectarte a la plataforma? Comenzarás a recibir nuevos viajes.'
-    )
-    
-    if (!confirmToggle) return
-    
-    try {
-        const response = await api.post('/driver/toggle-availability')
-        if (response.data.status) {
-            isAvailable.value = !isAvailable.value
-            // Save availability status to localStorage
-            localStorage.setItem('driver_available', JSON.stringify(isAvailable.value))
-            const message = isAvailable.value 
-                ? '📍 ¡Conectado! Ya recibes viajes.'
-                : '🔴 Desconectado. No recibirás nuevos viajes.'
-            alert(message)
-        }
-    } catch (error) {
-        alert(error.response?.data?.message || 'Error al cambiar disponibilidad')
-        console.error('Error toggling availability:', error)
-    }
-}
-
-// --- Visibility Change Handler ---
-const handleVisibilityChange = () => {
-    // When app comes back from background (Waze/Maps navigation)
-    if (!document.hidden && activeOrder.value && !isSimulatorMode.value) {
-        // Ensure tracking is active
-        if (!locationSyncInterval) {
-            console.log('App returned from background, restarting tracking...')
-            startRealTracking()
-        }
-        // Force immediate sync
-        syncLocation()
-    }
+        await api.post('/driver/location', { lat: currentPos.value.lat, lng: currentPos.value.lng })
+    } catch (e) { console.warn('Sync failed:', e) }
 }
 
 // --- Init ---
 onMounted(async () => {
-    // Load driver availability status from localStorage
-    const savedAvailability = localStorage.getItem('driver_available')
-    if (savedAvailability !== null) {
-        isAvailable.value = JSON.parse(savedAvailability)
+    // Restore driver online/offline state from backend (survives page reloads)
+    try {
+        const meRes = await api.get('/auth/me')
+        if (meRes.data.status && meRes.data.data?.driver) {
+            isDriverOnline.value = parseInt(meRes.data.data.driver.is_active) === 1
+        }
+    } catch (e) {
+        console.warn('Could not fetch driver status:', e)
     }
-    
-    await syncCurrentTrip()
+
+    fetchTodayEarnings()
+    earningsInterval = setInterval(fetchTodayEarnings, 30000)
+
     loadAvailableOrders()
-    
-    // Background polling for new trips (every 10s)
-    pollInterval = setInterval(() => {
-        if (!activeOrder.value) {
-            loadAvailableOrders()
-        }
-    }, 10000)
-
-    window.addEventListener('online', syncCurrentTrip)
-    document.addEventListener('visibilitychange', handleVisibilityChange)
-    
-    // Init Map
+    pollInterval = setInterval(() => { if (!activeOrder.value) loadAvailableOrders() }, 10000)
     await MapService.ensureSDKLoaded()
-    MapService.initialize('app-map-root', {
-        center: [20.5222, -100.8122],
-        zoom: 13
-    }).then(() => {
-        mapLoading.value = false
-        // Start watching real position immediately if not simulating
-        if (!isSimulatorMode.value) {
-            startRealTracking()
-        }
-    }).catch(() => {
-        mapLoading.value = false
-    })
-
+    MapService.initialize('app-map-root', { center: [20.5222, -100.8122], zoom: 13 })
+        .then(() => { mapLoading.value = false; if (!isSimulatorMode.value) startRealTracking() })
+        .catch(() => { mapLoading.value = false })
     setTimeout(() => { mapLoading.value = false }, 5000)
 })
 
 onUnmounted(() => {
     if (simInterval) clearInterval(simInterval)
     if (pollInterval) clearInterval(pollInterval)
-    if (locationSyncInterval) clearInterval(locationSyncInterval)
-    if (simSyncInterval) clearInterval(simSyncInterval)
+    if (earningsInterval) clearInterval(earningsInterval)
     if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId)
-    window.removeEventListener('online', syncCurrentTrip)
-    document.removeEventListener('visibilitychange', handleVisibilityChange)
+    if (arrivalToastTimer) clearTimeout(arrivalToastTimer)
+    MapService.destroy()
 })
 
+const triggerCoinAnimation = () => {
+    if (!walletChipRef.value || !completeButtonRef.value) return
+
+    const btnRect = completeButtonRef.value.getBoundingClientRect()
+    const chipRect = walletChipRef.value.getBoundingClientRect()
+
+    const startX = btnRect.left + btnRect.width / 2
+    const startY = btnRect.top + btnRect.height / 2
+    const endX   = chipRect.left + chipRect.width / 2
+    const endY   = chipRect.top  + chipRect.height / 2
+
+    const COIN_COUNT = 9
+    const SIZE = 26
+    const half = SIZE / 2
+
+    for (let i = 0; i < COIN_COUNT; i++) {
+        setTimeout(() => {
+            const coin = document.createElement('div')
+            coin.textContent = '🪙'
+            Object.assign(coin.style, {
+                position:      'fixed',
+                left:          '0px',
+                top:           '0px',
+                fontSize:      SIZE + 'px',
+                lineHeight:    '1',
+                zIndex:        '9999',
+                pointerEvents: 'none',
+                userSelect:    'none',
+                willChange:    'transform, opacity',
+            })
+            document.body.appendChild(coin)
+
+            const spreadX  = (Math.random() - 0.5) * 130
+            const arcPeak  = Math.min(startY, endY) - 70 - Math.random() * 80
+            const midX     = (startX + endX) / 2 + spreadX
+            const spin1    = 90  + Math.random() * 120
+            const spin2    = 270 + Math.random() * 180
+
+            coin.animate([
+                {
+                    transform: `translate(${startX - half}px, ${startY - half}px) scale(1) rotate(0deg)`,
+                    opacity: '1',
+                    easing: 'cubic-bezier(0.2, 0, 0.3, 1)'
+                },
+                {
+                    transform: `translate(${midX - half}px, ${arcPeak - half}px) scale(1.3) rotate(${spin1}deg)`,
+                    opacity: '1',
+                    easing: 'cubic-bezier(0.55, 0, 0.8, 0.8)'
+                },
+                {
+                    transform: `translate(${endX - half}px, ${endY - half}px) scale(0.1) rotate(${spin2}deg)`,
+                    opacity: '0',
+                }
+            ], {
+                duration: 520 + Math.random() * 160,
+                fill: 'forwards'
+            }).onfinish = () => coin.remove()
+        }, i * 70)
+    }
+
+    // Bounce the wallet chip when the last coin arrives
+    setTimeout(() => {
+        walletBounce.value = true
+        setTimeout(() => { walletBounce.value = false }, 700)
+    }, (COIN_COUNT - 1) * 70 + 420)
+}
+
+const completeDelivery = () => {
+    triggerCoinAnimation()
+    updateStatus('entregado')
+}
+
 const toggleSimulatorMode = () => {
-    isSimulatorMode.value = !isSimulatorMode.value;
+    isSimulatorMode.value = !isSimulatorMode.value
     if (isSimulatorMode.value) {
-        stopRealTracking();
-        if (activeOrder.value) startSimulation();
+        if (locationWatchId) { navigator.geolocation.clearWatch(locationWatchId); locationWatchId = null }
+        if (routePoints.value.length > 0) {
+            currentIndex.value = 0
+            startSimulation()
+        }
     } else {
-        stopSimulation();
-        startRealTracking();
+        stopSimulation()
+        startRealTracking()
     }
 }
 </script>
 
 <template>
-  <div class="mobile-app-theme">
-    <!-- Main App Container (Simulating a Phone / PWA Standalone container) -->
-    <div class="app-frame">
-      
-      <!-- Top Bar -->
-      <header class="app-header">
-        <button class="back-btn">←</button>
-        <div class="header-title-section">
-          <h1>Modo Conductor</h1>
-          <div class="online-indicator" :class="{ 'online': isAvailable, 'offline': !isAvailable }">
-            <span class="status-dot"></span>
-            <span class="status-text">{{ isAvailable ? 'On line' : 'Off line' }}</span>
-          </div>
+  <div class="relative w-full h-full overflow-hidden bg-slate-900">
+
+    <!-- ── FULL SCREEN MAP ──────────────────────────────────── -->
+    <div id="app-map-root" class="absolute inset-0 z-0"></div>
+
+    <!-- Top gradient scrim -->
+    <div class="absolute top-0 inset-x-0 h-36 bg-gradient-to-b from-black/40 to-transparent z-10 pointer-events-none"></div>
+    <!-- Bottom gradient scrim -->
+    <div class="absolute bottom-0 inset-x-0 h-72 bg-gradient-to-t from-black/25 to-transparent z-10 pointer-events-none"></div>
+
+    <!-- ── TOP BAR ──────────────────────────────────────────── -->
+    <div class="absolute top-0 inset-x-0 z-20 flex items-center justify-between px-4 pt-5 pb-3">
+
+      <!-- Avatar -->
+      <button class="w-11 h-11 rounded-2xl overflow-hidden shadow-lg ring-2 ring-white/20 flex-shrink-0">
+        <img :src="avatarUrl" alt="avatar" class="w-full h-full object-cover" />
+      </button>
+
+      <!-- Driver status toggle -->
+      <DriverStatusToggle
+        v-model="isDriverOnline"
+        :loading="isTogglingStatus"
+        @update:modelValue="toggleDriverStatus"
+      />
+
+      <!-- Mode toggle -->
+      <ModeToggle v-model="modeValue" />
+
+    </div>
+
+    <!-- ── FLOATING EARNINGS CHIP ────────────────────────────── -->
+    <div class="absolute top-[72px] left-4 z-20 pointer-events-none">
+      <div
+        ref="walletChipRef"
+        class="flex items-center gap-2 px-3 py-1.5 rounded-2xl"
+        :class="{ 'wallet-bounce': walletBounce }"
+        style="background: rgba(0,0,0,0.52); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.3);"
+      >
+        <span class="text-base leading-none">💰</span>
+        <span class="text-white font-extrabold text-sm tracking-tight">${{ todayEarnings.toFixed(2) }}</span>
+        <span class="w-px h-3 bg-white/20 flex-shrink-0"></span>
+        <span class="text-white/50 text-xs">{{ todayTrips }} {{ todayTrips === 1 ? 'viaje' : 'viajes' }} hoy</span>
+      </div>
+    </div>
+
+    <!-- ── ARRIVAL TOAST ──────────────────────────────────────── -->
+    <Transition name="toast-drop">
+      <div
+        v-if="showArrivalToast"
+        class="absolute top-24 inset-x-4 z-40 flex items-center gap-4
+               bg-emerald-500 text-white rounded-2xl px-5 py-4
+               shadow-[0_8px_32px_rgba(16,185,129,0.5)] pointer-events-none"
+      >
+        <span class="text-2xl flex-shrink-0">📍</span>
+        <div>
+          <p class="font-extrabold text-[15px] leading-tight">Llegaste al punto de recogida</p>
+          <p class="text-emerald-100 text-[13px] mt-0.5">El cliente está esperando</p>
         </div>
-        <div class="settings-menu-container">
-          <button class="settings-btn" @click="showMenu = !showMenu" title="Ajustes">
-            ⚙️
-          </button>
-          <div v-if="showMenu" class="settings-dropdown">
-            <button class="menu-item" @click="toggleSimulatorMode(); showMenu = false">
-              <span v-if="isSimulatorMode">📍 Cambiar a VIVO</span>
-              <span v-else>🎮 Probar SIMULADOR</span>
-            </button>
-            <button 
-              class="menu-item" 
-              :class="{ 'available': isAvailable, 'unavailable': !isAvailable }"
-              @click="toggleAvailability(); showMenu = false"
+      </div>
+    </Transition>
+
+    <!-- ── LOADING OVERLAY ──────────────────────────────────── -->
+    <Transition name="fade">
+      <div v-if="mapLoading" class="absolute inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center gap-4">
+        <div class="w-14 h-14 rounded-full border-4 border-blue-900 border-t-blue-500 animate-spin"></div>
+        <p class="text-white/70 font-medium text-sm">Conectando con la flota...</p>
+      </div>
+    </Transition>
+
+    <!-- ── BOTTOM CARD ──────────────────────────────────────── -->
+    <div class="absolute bottom-0 inset-x-0 z-20">
+
+      <!-- ─ NO ACTIVE ORDER ─ -->
+      <Transition name="slide-up">
+        <div v-if="!activeOrder" class="sheet-card">
+
+          <!-- Handle -->
+          <div class="w-14 h-[6px] bg-gray-200 rounded-full mx-auto mb-8"></div>
+
+          <!-- Has orders -->
+          <template v-if="availableOrders.length > 0">
+
+            <!-- Content block -->
+            <div class="sheet-content">
+
+              <!-- Tappable route preview -->
+              <button
+                @click="showRouteDetail = !showRouteDetail"
+                class="w-full text-left bg-gray-50 active:bg-gray-100 rounded-3xl px-6 py-6 mb-6
+                       transition-colors duration-150 border border-gray-100"
+              >
+                <div class="flex items-center gap-5">
+                  <div class="w-16 h-16 rounded-2xl bg-blue-50 border border-blue-100 flex items-center justify-center text-3xl flex-shrink-0">
+                    🚚
+                  </div>
+                  <div class="flex-1 min-w-0">
+                    <div class="flex items-center gap-2.5 mb-2.5">
+                      <span class="w-3 h-3 rounded-full bg-emerald-500 flex-shrink-0"></span>
+                      <p class="text-[16px] font-semibold text-gray-800 truncate">
+                        {{ availableOrders[0].pickup_address.split(',')[0] }}
+                      </p>
+                    </div>
+                    <div class="flex items-center gap-2.5">
+                      <span class="w-3 h-3 rounded-full bg-red-500 flex-shrink-0"></span>
+                      <p class="text-[15px] text-gray-500 truncate">
+                        {{ availableOrders[0].drop_address?.split(',')[0] ?? 'Destino' }}
+                      </p>
+                    </div>
+                  </div>
+                  <svg
+                    class="w-6 h-6 text-gray-400 flex-shrink-0 transition-transform duration-200"
+                    :class="showRouteDetail ? 'rotate-180' : ''"
+                    fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                  >
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                  </svg>
+                </div>
+
+                <Transition name="expand">
+                  <div v-if="showRouteDetail" class="mt-5 pt-5 border-t border-gray-200 space-y-4">
+                    <div class="flex gap-4 text-[15px]">
+                      <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Origen</span>
+                      <span class="text-gray-700 font-semibold leading-snug">{{ availableOrders[0].pickup_address }}</span>
+                    </div>
+                    <div class="flex gap-4 text-[15px]">
+                      <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Destino</span>
+                      <span class="text-gray-700 font-semibold leading-snug">{{ availableOrders[0].drop_address }}</span>
+                    </div>
+                    <div class="flex gap-4 text-[15px]">
+                      <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Distancia</span>
+                      <span class="text-gray-700 font-semibold">{{ availableOrders[0].distance_km }} km</span>
+                    </div>
+                  </div>
+                </Transition>
+              </button>
+
+              <!-- Stats chips -->
+              <div class="grid grid-cols-3 gap-4">
+                <div class="bg-gray-50 rounded-2xl px-3 py-5 text-center border border-gray-100">
+                  <p class="text-[11px] text-gray-400 font-semibold uppercase tracking-wide mb-2">Distancia</p>
+                  <p class="font-bold text-gray-800 text-[17px]">{{ availableOrders[0].distance_km }} km</p>
+                </div>
+                <div class="bg-blue-50 rounded-2xl px-3 py-5 text-center border border-blue-100">
+                  <p class="text-[11px] text-blue-400 font-semibold uppercase tracking-wide mb-2">Tarifa</p>
+                  <p class="font-extrabold text-blue-600 text-[17px]">${{ availableOrders[0].cost }}</p>
+                </div>
+                <div class="bg-gray-50 rounded-2xl px-3 py-5 text-center border border-gray-100">
+                  <p class="text-[11px] text-gray-400 font-semibold uppercase tracking-wide mb-2">Pago</p>
+                  <p class="font-bold text-gray-800 text-[13px] leading-tight">
+                    {{ availableOrders[0].payment_type === 'prepaid' ? 'Prepago' : 'Efectivo' }}
+                  </p>
+                </div>
+              </div>
+            </div>
+
+            <!-- CTA block — pinned to bottom -->
+            <div class="sheet-cta">
+              <button
+                @click="acceptOrder(availableOrders[0])"
+                class="sheet-btn sheet-btn--blue"
+              >
+                Aceptar Viaje
+              </button>
+              <p class="text-center text-gray-400 text-[14px] mt-4">
+                <template v-if="availableOrders.length > 1">
+                  +{{ availableOrders.length - 1 }} viaje{{ availableOrders.length > 2 ? 's' : '' }} más disponible{{ availableOrders.length > 2 ? 's' : '' }}
+                </template>
+                <template v-else>Desliza para rechazar</template>
+              </p>
+            </div>
+          </template>
+
+          <!-- Empty state -->
+          <template v-else>
+            <div class="sheet-content flex flex-col items-center justify-center text-center">
+              <p class="text-7xl mb-6 opacity-25">📡</p>
+              <p class="text-gray-700 font-bold text-xl mb-3">Sin viajes disponibles</p>
+              <p class="text-gray-400 text-[15px]">Estás en línea y esperando solicitudes</p>
+            </div>
+            <div class="sheet-cta">
+              <button
+                @click="loadAvailableOrders"
+                class="sheet-btn sheet-btn--blue"
+              >
+                Buscar de nuevo
+              </button>
+            </div>
+          </template>
+        </div>
+      </Transition>
+
+      <!-- ─ ACTIVE TRIP ─ -->
+      <Transition name="slide-up">
+        <div v-if="activeOrder" class="sheet-card">
+
+          <!-- Handle -->
+          <div class="w-14 h-[6px] bg-gray-200 rounded-full mx-auto mb-7"></div>
+
+          <!-- Status badge -->
+          <div class="flex justify-center mb-7">
+            <span
+              class="px-7 py-3 rounded-full text-[13px] font-extrabold uppercase tracking-widest"
+              :class="{
+                'bg-amber-100 text-amber-700':     activeOrder.status === 'tomado',
+                'bg-blue-100 text-blue-700':       activeOrder.status === 'arribado',
+                'bg-emerald-100 text-emerald-700': activeOrder.status === 'en_camino',
+              }"
             >
-              <span v-if="isAvailable">🟢 Desconectarse</span>
-              <span v-else>🔴 Conectarse</span>
+              {{
+                activeOrder.status === 'tomado'    ? '📍 En camino al origen' :
+                activeOrder.status === 'arribado'  ? '✅ En punto de recogida' :
+                activeOrder.status === 'en_camino' ? '🚚 En camino al destino' :
+                activeOrder.status.toUpperCase()
+              }}
+            </span>
+          </div>
+
+          <!-- Content block -->
+          <div class="sheet-content">
+
+            <!-- Tappable route card -->
+            <button
+              @click="showRouteDetail = !showRouteDetail"
+              class="w-full text-left bg-gray-50 active:bg-gray-100 rounded-3xl px-6 py-6 mb-6
+                     transition-colors duration-150 border border-gray-100"
+            >
+              <div class="flex items-center justify-between mb-5">
+                <span class="text-[12px] font-bold text-gray-400 uppercase tracking-widest">Ruta</span>
+                <svg
+                  class="w-6 h-6 text-gray-400 transition-transform duration-200"
+                  :class="showRouteDetail ? 'rotate-180' : ''"
+                  fill="none" stroke="currentColor" viewBox="0 0 24 24"
+                >
+                  <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2.5" d="M19 9l-7 7-7-7"/>
+                </svg>
+              </div>
+
+              <div class="flex items-start gap-5">
+                <div class="flex flex-col items-center pt-1.5 gap-[6px] flex-shrink-0">
+                  <span class="w-3.5 h-3.5 rounded-full bg-emerald-500 ring-2 ring-emerald-200"></span>
+                  <span class="w-px h-8 bg-gray-300"></span>
+                  <span class="w-3.5 h-3.5 rounded-full bg-red-500 ring-2 ring-red-200"></span>
+                </div>
+                <div class="flex-1 min-w-0 space-y-5">
+                  <div>
+                    <p class="text-[11px] text-gray-400 font-bold uppercase tracking-widest mb-1.5">Recogida</p>
+                    <p class="text-[16px] font-semibold text-gray-800 leading-snug truncate">{{ activeOrder.pickup_address }}</p>
+                  </div>
+                  <div>
+                    <p class="text-[11px] text-gray-400 font-bold uppercase tracking-widest mb-1.5">Entrega</p>
+                    <p class="text-[16px] font-semibold text-gray-800 leading-snug truncate">{{ activeOrder.drop_address }}</p>
+                  </div>
+                </div>
+              </div>
+
+              <Transition name="expand">
+                <div v-if="showRouteDetail" class="mt-5 pt-5 border-t border-gray-200 space-y-4">
+                  <div class="flex gap-4 text-[15px]">
+                    <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Origen</span>
+                    <span class="text-gray-700 font-semibold leading-snug">{{ activeOrder.pickup_address }}</span>
+                  </div>
+                  <div class="flex gap-4 text-[15px]">
+                    <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Destino</span>
+                    <span class="text-gray-700 font-semibold leading-snug">{{ activeOrder.drop_address }}</span>
+                  </div>
+                  <div class="flex gap-4 text-[15px]">
+                    <span class="text-gray-400 font-semibold w-20 flex-shrink-0">Distancia</span>
+                    <span class="text-gray-700 font-semibold">{{ activeOrder.distance_km }} km</span>
+                  </div>
+                </div>
+              </Transition>
             </button>
-          </div>
-        </div>
-      </header>
 
-      <!-- Content Area -->
-      <main class="app-content">
-        
-        <div class="content-header">
-           <h2>Viajes Disponibles</h2>
-           <button class="see-all">Ver Todos</button>
-        </div>
-
-        <!-- Tab 1: Available Trips -->
-        <div v-if="!activeOrder" class="trip-scroller">
-          <div v-if="availableOrders.length > 0">
-            <div class="trip-card-mobile" v-for="order in availableOrders" :key="order.id">
-              <div class="card-body">
-                <div class="trip-header">
-                  <div class="trip-icon">🚚</div>
-                  <div class="trip-meta">
-                    <h3>ID-{{ order.id.toString().padStart(5, '0') }}</h3>
-                    <span class="fare">Tarifa - ${{ order.cost }}</span>
-                  </div>
-                  <button class="btn-tracking">Rastreo</button>
-                </div>
-
-                <div class="route-info">
-                  <div class="loc">
-                    <span class="city">{{ order.pickup_address.split(',')[0] }}</span>
-                  </div>
-                  <div class="dist-pill">Nuevo</div>
-                  <div class="loc">
-                    <span class="city">{{ order.drop_address.split(',')[0] }}</span>
-                  </div>
-                </div>
-
-                <div class="card-actions">
-                  <button class="btn-reject">Rechazar</button>
-                  <button @click="acceptOrder(order)" class="btn-accept-mobile">Aceptar Viaje</button>
-                </div>
+            <!-- Progress bar (simulator only) -->
+            <div v-if="isSimulatorMode">
+              <div class="flex justify-between text-[13px] text-gray-500 font-semibold mb-3">
+                <span>Progreso de simulación</span>
+                <span class="text-blue-600 font-bold">{{ progress }}%</span>
+              </div>
+              <div class="h-3 bg-gray-100 rounded-full overflow-hidden">
+                <div
+                  class="h-full bg-blue-600 rounded-full transition-all duration-300"
+                  :style="{ width: progress + '%' }"
+                ></div>
               </div>
             </div>
-          </div>
-          
-          <!-- Empty State -->
-          <div class="empty-mobile" v-else>
-            <div class="radar-static">📦</div>
-            <p>No hay viajes disponibles hoy</p>
-            <button @click="loadAvailableOrders" class="btn-refresh-mobile">Buscar Nuevamente</button>
 
-            <!-- Simulator Info -->
-            <div v-if="isSimulatorMode" class="simulator-info-box">
-              <h3>🎮 Modo Simulador Activo</h3>
-              <p>Puedes aceptar un viaje de la lista anterior y probarlo sin salir de tu oficina.</p>
-              <p>El rastreo funcionará igual que en modo EN VIVO (cada 3 segundos).</p>
-              <button class="btn-switch-live" @click="toggleSimulatorMode">Cambiar a Modo EN VIVO</button>
+            <!-- Simulator speed control -->
+            <div v-if="isSimulatorMode" class="mt-5 bg-amber-50 border border-amber-100 rounded-2xl px-6 py-5">
+              <div class="flex justify-between items-center mb-4">
+                <p class="text-[12px] font-bold text-amber-700 uppercase tracking-widest">Velocidad</p>
+                <p class="text-[17px] font-extrabold text-amber-700">{{ speedKmh }} km/h</p>
+              </div>
+              <input type="range" min="30" max="120" v-model="speedKmh"
+                     class="w-full accent-amber-500 cursor-pointer h-2" />
             </div>
           </div>
-        </div>
 
-        <!-- Tab 2: Workflow (If trip accepted) -->
-        <div v-else class="active-trip-view">
-           <div class="active-header">
-               <div class="status-badge" :class="activeOrder.status">
-                  {{ 
-                    activeOrder.status === 'tomado' ? 'ACEPTADO' : 
-                    activeOrder.status === 'arribado' ? 'ESPERANDO' : 
-                    activeOrder.status === 'en_camino' ? 'EN CAMINO' : 
-                    activeOrder.status.toUpperCase() 
-                  }}
-               </div>
-               <h3>Viaje en Progreso</h3>
-               <div class="nav-btn-group">
-                  <button @click="openNavigation()" class="btn-mini-nav">🧭 {{ navPreference ? 'Continuar' : 'Navegar' }}</button>
-                  <button v-if="navPreference" @click="showNavModal = true" class="btn-mini-nav settings">⚙️</button>
-               </div>
-           </div>
+          <!-- CTA block — pinned to bottom -->
+          <div class="sheet-cta">
 
-           <div class="active-card">
-              <div class="detail-row">
-                 <span class="lbl">Recolección:</span>
-                 <span class="val">{{ activeOrder.pickup_address }}</span>
+            <!-- Error message -->
+            <div v-if="statusError" class="flex items-center gap-4 text-red-600 text-[14px] font-semibold
+                                           bg-red-50 border border-red-200 rounded-2xl px-5 py-4 mb-4">
+              <svg class="w-5 h-5 flex-shrink-0" fill="currentColor" viewBox="0 0 20 20">
+                <path fill-rule="evenodd" d="M18 10a8 8 0 11-16 0 8 8 0 0116 0zm-7 4a1 1 0 11-2 0 1 1 0 012 0zm-1-9a1 1 0 00-1 1v4a1 1 0 102 0V6a1 1 0 00-1-1z" clip-rule="evenodd"/>
+              </svg>
+              {{ statusError }}
+            </div>
+
+            <!-- PASO 1 — auto-arrival, no manual button needed -->
+            <template v-if="activeOrder.status === 'tomado'">
+              <div class="sheet-btn-disabled">
+                {{ isSimulatorMode ? `Simulando… ${progress}%` : 'Navegando al punto de recogida…' }}
               </div>
-              <div class="detail-row">
-                 <span class="lbl">Entrega:</span>
-                 <span class="val">{{ activeOrder.drop_address }}</span>
+            </template>
+
+            <!-- PASO 2 -->
+            <template v-else-if="activeOrder.status === 'arribado'">
+              <button
+                @click="updateStatus('en_camino')"
+                class="sheet-btn sheet-btn--indigo"
+              >
+                Iniciar viaje al destino
+              </button>
+            </template>
+
+            <!-- PASO 3 -->
+            <template v-else-if="activeOrder.status === 'en_camino'">
+              <button
+                v-if="!isSimulatorMode || progress >= 100"
+                ref="completeButtonRef"
+                @click="completeDelivery"
+                class="sheet-btn sheet-btn--green"
+              >
+                Completar Entrega ✓
+              </button>
+              <div v-else class="sheet-btn-disabled">
+                Simulando trayecto al destino...
               </div>
-              
-              <div class="progress-section" v-if="isSimulatorMode">
-                 <div class="bar"><div class="fill" :style="{ width: progress + '%' }"></div></div>
-                 <span class="pct">{{ progress }}% completado - Simulación</span>
-              </div>
-           </div>
-
-           <div class="control-grid">
-              
-              <!-- Real mode or Simulator mode UI for statuses -->
-              <template v-if="activeOrder.status === 'tomado'">
-                 <button 
-                  v-if="!isSimulatorMode || progress >= 100"
-                  @click="updateStatus('arribado')" 
-                  class="btn-action-mobile arrived"
-                 >
-                  Llegué al punto de recogida
-                 </button>
-              </template>
-
-              <template v-if="activeOrder.status === 'arribado'">
-                 <button 
-                  v-if="!isSimulatorMode || progress >= 100"
-                  @click="updateStatus('en_camino')" 
-                  class="btn-action-mobile pickup"
-                 >
-                  Iniciar viaje (Hacia el destino)
-                 </button>
-              </template>
-
-              <template v-if="activeOrder.status === 'en_camino'">
-                 <button 
-                  v-if="!isSimulatorMode || progress >= 100"
-                  @click="updateStatus('entregado')" 
-                  class="btn-action-mobile deliver"
-                 >
-                  Completar Entrega
-                 </button>
-              </template>
-
-              <!-- Simulator Controls -->
-              <div v-if="isSimulatorMode && activeOrder" class="simulator-control-panel">
-                <div class="sim-header">
-                  <span class="sim-title">🎮 CONTROL DE SIMULADOR</span>
-                  <span class="sim-status" :class="{ 'active': isSimulating }">
-                    {{ isSimulating ? '▶️ ACTIVO' : '⏸️ PAUSADO' }}
-                  </span>
-                </div>
-
-                <div class="sim-progress">
-                  <div class="progress-bar">
-                    <div class="progress-fill" :style="{ width: progress + '%' }"></div>
-                  </div>
-                  <span class="progress-text">{{ progress }}% recorrido</span>
-                </div>
-
-                <div class="sim-speed-control">
-                  <label>Velocidad Simulada</label>
-                  <div class="speed-display">
-                    <span class="speed-value">{{ speedKmh }} km/h</span>
-                  </div>
-                  <input 
-                    type="range" 
-                    min="10" 
-                    max="120" 
-                    v-model="speedKmh" 
-                    class="speed-slider"
-                  />
-                  <div class="speed-hints">
-                    <span class="hint">🚶 Lento (10 km/h)</span>
-                    <span class="hint">🚗 Normal (60 km/h)</span>
-                    <span class="hint">🏎️ Rápido (120 km/h)</span>
-                  </div>
-                </div>
-
-                <div class="sim-info">
-                  <p>💡 Usa el simulador para probar sin salir a la calle</p>
-                  <p>📍 El rastreo funciona igual que en modo EN VIVO (cada 3 segundos)</p>
-                </div>
-              </div>
-           </div>
-        </div>
-
-      </main>
-
-      <!-- Footer Menu -->
-      <footer class="app-nav">
-         <div class="nav-item active">🏠</div>
-         <div class="nav-item">📈</div>
-         <div class="nav-item">👤</div>
-      </footer>
-
-    </div>
-
-    <!-- Navigation Selection Modal -->
-    <div v-if="showNavModal" class="nav-modal-overlay" @click.self="showNavModal = false">
-       <div class="nav-modal-content">
-          <h3>Iniciar Navegación</h3>
-          <p>Selecciona cómo deseas viajar:</p>
-          
-          <div class="nav-options">
-             <button @click="openNavigation('google')" class="nav-opt-btn google">
-                <span class="icon">🗺️</span>
-                Google Maps
-             </button>
-             <button @click="openNavigation('waze')" class="nav-opt-btn waze">
-                <span class="icon">🚙</span>
-                Waze
-             </button>
-             <button @click="openNavigation('self-navigate')" class="nav-opt-btn self-nav">
-                <span class="icon">🛣️</span>
-                Viajar por mi cuenta
-             </button>
+            </template>
           </div>
-
-          <p class="tracking-notice">⚠️ Serás rastreado en todo momento para tu seguridad</p>
-          
-          <button @click="showNavModal = false" class="btn-close-modal">Cancelar</button>
-       </div>
-    </div>
-
-    <!-- Background Map (Hidden but functional for tracking) -->
-    <div id="app-map-root" style="width:0; height:0; visibility:hidden; position: absolute;"></div>
-    
-    <!-- Completion Message Toast -->
-    <div v-if="tripCompletedMessage" class="completion-toast">{{ tripCompletedMessage }}</div>
-
-    <!-- Initializing Overlay (Mobile style) -->
-    <div v-if="mapLoading" class="overlay-mobile">
-       <div class="spinner"></div>
-       <p>Conectando con la Flota...</p>
+        </div>
+      </Transition>
     </div>
   </div>
 </template>
 
 <style scoped>
-.mobile-app-theme {
-  display: flex;
-  justify-content: center;
-  align-items: center;
-  /* Occupy full space for PWA feeling */
-  min-height: 100dvh;
-  background: #121212;
-  font-family: 'Outfit', sans-serif;
-  overflow-x: hidden;
-}
-
-.app-frame {
+/* Map must fill its container */
+#app-map-root {
   width: 100%;
-  max-width: 100%;
-  height: 100vh;
-  background: #1a1a1a;
-  display: flex;
-  flex-direction: column;
-  position: relative;
-}
-
-@media (min-width: 600px) {
-    .app-frame {
-        max-width: 420px;
-        height: 90vh;
-        border-radius: 40px;
-        overflow: hidden;
-        box-shadow: 0 50px 100px rgba(0,0,0,0.5);
-        border: 8px solid #222;
-    }
-}
-
-/* App Header */
-.app-header {
-  padding: 1rem 1.5rem;
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  background: linear-gradient(135deg, #1a1a1a 0%, #242424 100%);
-  gap: 1rem;
-}
-.app-header h1 { font-size: 1rem; color: #fff; font-weight: 600; margin: 0; }
-
-.header-title-section {
-  display: flex;
-  flex-direction: column;
-  gap: 0.35rem;
-  flex: 1;
-}
-
-.online-indicator {
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-  font-size: 0.75rem;
-  font-weight: 600;
-  padding: 0.25rem 0.6rem;
-  border-radius: 12px;
-  width: fit-content;
-}
-
-.online-indicator.online {
-  background: rgba(16, 185, 129, 0.15);
-  color: #10B981;
-}
-
-.online-indicator.offline {
-  background: rgba(239, 68, 68, 0.15);
-  color: #EF4444;
-}
-
-.status-dot {
-  display: inline-block;
-  width: 0.5rem;
-  height: 0.5rem;
-  border-radius: 50%;
-  animation: pulse-status 2s ease-in-out infinite;
-}
-
-.online-indicator.online .status-dot {
-  background: #10B981;
-}
-
-.online-indicator.offline .status-dot {
-  background: #EF4444;
-}
-
-@keyframes pulse-status {
-  0%, 100% { opacity: 1; }
-  50% { opacity: 0.5; }
-}
-
-.back-btn { background: #2a2a2a; border: none; color: white; width: 36px; height: 36px; border-radius: 50%; display: flex; align-items: center; justify-content: center; cursor: pointer; transition: background 0.2s; }
-.back-btn:hover { background: #333; }
-
-.settings-menu-container {
-  position: relative;
-}
-
-.settings-btn {
-  background: none;
-  border: none;
-  font-size: 1.5rem;
-  cursor: pointer;
-  padding: 0.25rem;
-  transition: transform 0.2s ease;
-}
-
-.settings-btn:hover {
-  transform: rotate(90deg);
-}
-
-.settings-btn:active {
-  transform: rotate(90deg) scale(0.9);
-}
-
-.settings-dropdown {
-  position: absolute;
-  top: 100%;
-  right: 0;
-  margin-top: 0.5rem;
-  background: #2a2a2a;
-  border: 1px solid #444;
-  border-radius: 12px;
-  min-width: 200px;
-  z-index: 1000;
-  box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
-  overflow: hidden;
-}
-
-.menu-item {
-  display: block;
-  width: 100%;
-  padding: 0.75rem 1rem;
-  background: none;
-  border: none;
-  color: white;
-  text-align: left;
-  cursor: pointer;
-  font-size: 0.9rem;
-  transition: background 0.2s ease;
-  border-bottom: 1px solid #444;
-}
-
-.menu-item:last-child {
-  border-bottom: none;
-}
-
-.menu-item:hover {
-  background: #333;
-}
-
-.menu-item.available {
-  color: #10B981;
-}
-
-.menu-item.unavailable {
-  color: #EF4444;
-}
-
-/* App Content */
-.app-content { flex: 1; overflow-y: auto; padding: 1.5rem; background: #1a1a1a; }
-.content-header { display: flex; justify-content: space-between; align-items: center; margin-bottom: 1.5rem; }
-.content-header h2 { font-size: 1.35rem; color: #fff; margin: 0; }
-.see-all { color: #888; background: none; border: none; font-size: 0.9rem; }
-
-/* Trip Cards */
-.trip-card-mobile {
-  background: #242424;
-  border-radius: 24px;
-  padding: 1.5rem;
-  margin-bottom: 1.2rem;
-  transition: transform 0.2s;
-}
-.trip-card-mobile:first-child { background: #FFB800; }
-.trip-card-mobile:first-child h3, .trip-card-mobile:first-child .fare, .trip-card-mobile:first-child .city { color: #000; }
-.trip-card-mobile:first-child .trip-icon { background: #000; color: #fff; }
-.trip-card-mobile:first-child .btn-tracking { background: #d99c00; color: #fff; }
-.trip-card-mobile:first-child .btn-accept-mobile { background: #000; color: #fff; }
-
-.trip-header { display: flex; align-items: center; gap: 1rem; margin-bottom: 1.25rem; }
-.trip-icon { width: 50px; height: 50px; background: #333; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
-.trip-meta { flex: 1; }
-.trip-meta h3 { margin: 0; font-size: 1.1rem; color: #fff; }
-.fare { font-size: 0.9rem; color: #FFB800; font-weight: 600; }
-.btn-tracking { padding: 0.5rem 1rem; border-radius: 20px; border: none; background: #333; color: #fff; font-size: 0.8rem; }
-
-.route-info { display: flex; align-items: center; justify-content: space-between; margin-bottom: 1.5rem; }
-.city { font-size: 0.95rem; color: #fff; font-weight: 500; }
-.dist-pill { background: rgba(0,0,0,0.1); padding: 0.25rem 0.75rem; border-radius: 20px; font-size: 0.8rem; color: #777; border: 1px solid rgba(255,255,255,0.1); }
-
-.card-actions { display: flex; gap: 1rem; }
-.btn-reject { flex: 1; padding: 1rem; border-radius: 18px; border: none; background: rgba(255,255,255,0.05); color: #888; font-weight: 600; font-size: 1rem; }
-.btn-accept-mobile { flex: 1; padding: 1rem; border-radius: 18px; border: none; background: #FFB800; color: #000; font-weight: 700; cursor: pointer; font-size: 1rem; }
-
-/* Active Trip View */
-.active-trip-view { animation: slideIn 0.3s ease; }
-@keyframes slideIn { from { transform: translateY(20px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
-
-.active-header { text-align: center; margin-bottom: 2rem; }
-.status-badge { display: inline-block; padding: 0.4rem 1rem; border-radius: 20px; font-size: 0.8rem; font-weight: 800; margin-bottom: 0.5rem; }
-.status-badge.tomado { background: #FFB800; color: #000; }
-.status-badge.arribado { background: #3b82f6; color: #fff; }
-.status-badge.en_camino { background: #10b981; color: #fff; }
-
-.active-card { background: #242424; border-radius: 24px; padding: 1.5rem; margin-bottom: 2.5rem; }
-.detail-row { margin-bottom: 1.2rem; }
-.detail-row .lbl { display: block; font-size: 0.8rem; color: #888; text-transform: uppercase; margin-bottom: 0.4rem; }
-.detail-row .val { color: #fff; font-size: 1rem; line-height: 1.5; font-weight: 500;}
-
-.progress-section { margin-top: 2rem; }
-.bar { height: 10px; background: #333; border-radius: 5px; overflow: hidden; margin-bottom: 0.8rem; }
-.fill { height: 100%; background: #FFB800; transition: width 0.3s; }
-.pct { font-size: 0.85rem; color: #FFB800; font-weight: 600; }
-
-.control-grid { display: flex; flex-direction: column; gap: 1.25rem; }
-.btn-action-mobile { padding: 1.5rem; border-radius: 22px; border: none; font-weight: 800; font-size: 1.15rem; cursor: pointer; transition: transform 0.1s; }
-.btn-action-mobile:active { transform: scale(0.98); }
-.btn-action-mobile.arrived { background: #3b82f6; color: #fff; box-shadow: 0 8px 20px rgba(59, 130, 246, 0.3); }
-.btn-action-mobile.pickup { background: #FFB800; color: #000; box-shadow: 0 8px 20px rgba(255, 184, 0, 0.3); }
-.btn-action-mobile.deliver { background: #10b981; color: #fff; box-shadow: 0 8px 20px rgba(16, 185, 129, 0.3); }
-
-.speed-box { padding: 1.2rem; background: #000; border-radius: 22px; }
-.speed-box label { font-size: 0.85rem; color: #888; display: block; margin-bottom: 0.8rem; }
-.speed-box input { width: 100%; accent-color: #FFB800; }
-
-/* Simulator Control Panel */
-.simulator-control-panel {
-  background: linear-gradient(135deg, #2d2d2d 0%, #1a1a1a 100%);
-  border: 2px solid #8B5CF6;
-  border-radius: 20px;
-  padding: 1.5rem;
-  margin-top: 1.5rem;
-  box-shadow: 0 8px 24px rgba(139, 92, 246, 0.2);
-}
-
-.sim-header {
-  display: flex;
-  justify-content: space-between;
-  align-items: center;
-  margin-bottom: 1.2rem;
-  padding-bottom: 1rem;
-  border-bottom: 2px solid #8B5CF6;
-}
-
-.sim-title {
-  font-size: 0.95rem;
-  font-weight: 700;
-  color: #8B5CF6;
-}
-
-.sim-status {
-  font-size: 0.85rem;
-  font-weight: 600;
-  padding: 0.4rem 0.8rem;
-  background: rgba(139, 92, 246, 0.2);
-  border-radius: 12px;
-  color: #A78BFA;
-}
-
-.sim-status.active {
-  background: rgba(16, 185, 129, 0.2);
-  color: #10B981;
-}
-
-.sim-progress {
-  margin-bottom: 1.5rem;
-}
-
-.progress-bar {
-  width: 100%;
-  height: 10px;
-  background: #333;
-  border-radius: 10px;
-  overflow: hidden;
-  margin-bottom: 0.5rem;
-  border: 1px solid #8B5CF6;
-}
-
-.progress-fill {
   height: 100%;
-  background: linear-gradient(90deg, #8B5CF6 0%, #A78BFA 100%);
-  transition: width 0.3s ease;
 }
 
-.progress-text {
-  font-size: 0.8rem;
-  color: #888;
-  display: block;
-}
+/* ── Bottom Sheet ───────────────────────────────────────────── */
 
-.sim-speed-control {
-  margin-bottom: 1.5rem;
-}
-
-.sim-speed-control label {
-  display: block;
-  font-size: 0.85rem;
-  color: #aaa;
-  font-weight: 600;
-  margin-bottom: 0.8rem;
-}
-
-.speed-display {
-  background: #1a1a1a;
-  border-radius: 12px;
-  padding: 0.8rem;
-  margin-bottom: 0.8rem;
-  text-align: center;
-}
-
-.speed-value {
-  font-size: 1.4rem;
-  font-weight: 700;
-  color: #8B5CF6;
-}
-
-.speed-slider {
-  width: 100%;
-  height: 8px;
-  border-radius: 8px;
-  background: #333;
-  outline: none;
-  -webkit-appearance: none;
-  appearance: none;
-  margin-bottom: 0.8rem;
-}
-
-.speed-slider::-webkit-slider-thumb {
-  -webkit-appearance: none;
-  appearance: none;
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #8B5CF6;
-  cursor: pointer;
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
-}
-
-.speed-slider::-moz-range-thumb {
-  width: 22px;
-  height: 22px;
-  border-radius: 50%;
-  background: #8B5CF6;
-  cursor: pointer;
-  border: none;
-  box-shadow: 0 0 8px rgba(139, 92, 246, 0.6);
-}
-
-.speed-hints {
+/* Container: flex column, anchored to bottom of screen */
+.sheet-card {
   display: flex;
-  justify-content: space-between;
-  font-size: 0.75rem;
-  color: #666;
+  flex-direction: column;
+  min-height: 48vh;
+  background: #ffffff;
+  border-radius: 40px 40px 0 0;
+  box-shadow: 0 -14px 56px rgba(0, 0, 0, 0.22);
+  padding: 24px 32px 0 32px;       /* top + sides only — bottom handled by CTA */
 }
 
-.hint {
+/* Content area grows to fill available space */
+.sheet-content {
+  flex: 1;
+  min-height: 0;
+}
+
+/* CTA area pinned to bottom, clears the BottomNav (72px) + home indicator */
+.sheet-cta {
+  margin-top: auto;
+  padding: 24px 0 96px;
+}
+
+/* ── Primary button ─────────────────────────────────────────── */
+
+.sheet-btn {
   display: flex;
   align-items: center;
-  gap: 0.3rem;
-}
-
-.sim-info {
-  background: rgba(139, 92, 246, 0.1);
-  border-left: 3px solid #8B5CF6;
-  padding: 0.8rem 1rem;
-  border-radius: 8px;
-  font-size: 0.8rem;
-  color: #A78BFA;
-  line-height: 1.5;
-}
-
-.sim-info p {
-  margin: 0.4rem 0;
-}
-
-/* Simulator Info Box */
-.simulator-info-box {
-  background: linear-gradient(135deg, rgba(139, 92, 246, 0.15) 0%, rgba(139, 92, 246, 0.05) 100%);
-  border: 2px solid #8B5CF6;
-  border-radius: 16px;
-  padding: 1.5rem;
-  margin-top: 2rem;
-  text-align: center;
-}
-
-.simulator-info-box h3 {
-  color: #8B5CF6;
-  margin: 0 0 0.8rem 0;
-  font-size: 1.1rem;
-}
-
-.simulator-info-box p {
-  color: #A78BFA;
-  font-size: 0.85rem;
-  margin: 0.6rem 0;
-  line-height: 1.5;
-}
-
-.btn-switch-live {
-  background: linear-gradient(135deg, #8B5CF6 0%, #A78BFA 100%);
-  color: white;
+  justify-content: center;
+  width: 100%;
+  padding: 26px 24px;
+  border-radius: 24px;
   border: none;
-  padding: 0.8rem 1.5rem;
-  border-radius: 20px;
-  font-weight: 600;
+  font-size: 20px;
+  font-weight: 800;
+  letter-spacing: 0.015em;
+  color: #ffffff;
   cursor: pointer;
-  margin-top: 1rem;
-  transition: all 0.2s ease;
+  transition: transform 0.12s ease, box-shadow 0.12s ease;
+  -webkit-tap-highlight-color: transparent;
 }
 
-.btn-switch-live:hover {
-  transform: translateY(-2px);
-  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.4);
+.sheet-btn:active {
+  transform: scale(0.97);
 }
 
-.btn-switch-live:active {
-  transform: translateY(0);
+.sheet-btn--blue {
+  background: #2563eb;
+  box-shadow: 0 12px 40px rgba(37, 99, 235, 0.55);
+}
+.sheet-btn--blue:active { background: #1d4ed8; }
+
+.sheet-btn--indigo {
+  background: #4f46e5;
+  box-shadow: 0 12px 40px rgba(79, 70, 229, 0.55);
+}
+.sheet-btn--indigo:active { background: #4338ca; }
+
+.sheet-btn--green {
+  background: #10b981;
+  box-shadow: 0 12px 40px rgba(16, 185, 129, 0.55);
+}
+.sheet-btn--green:active { background: #059669; }
+
+/* ── Wallet bounce on coin arrival ─────────────────────────── */
+@keyframes walletBounce {
+  0%   { transform: scale(1); }
+  20%  { transform: scale(1.45); }
+  45%  { transform: scale(0.88); }
+  65%  { transform: scale(1.2); }
+  80%  { transform: scale(0.96); }
+  100% { transform: scale(1); }
 }
 
-/* Footer Nav */
-.app-nav { height: 80px; background: #1a1a1a; border-top: 1px solid #333; display: flex; align-items: center; justify-content: space-around; padding-bottom: env(safe-area-inset-bottom, 1rem); }
-.nav-item { font-size: 1.6rem; color: #555; }
-.nav-item.active { color: #FFB800; }
-
-.radar-static { font-size: 4rem; margin-bottom: 1.5rem; opacity: 0.4; }
-.btn-refresh-mobile { background: #FFB800; color: #000; border: none; padding: 1rem 2rem; border-radius: 22px; font-weight: 700; cursor: pointer; margin-top: 1.5rem; font-size: 1rem;}
-.empty-mobile { text-align: center; padding: 5rem 1rem; color: #666; font-size: 1.1rem; }
-
-/* Initialization */
-.overlay-mobile { position: absolute; inset: 0; background: #1a1a1a; z-index: 100; display: flex; flex-direction: column; align-items: center; justify-content: center; }
-.spinner { width: 50px; height: 50px; border: 4px solid #333; border-top-color: #FFB800; border-radius: 50%; animation: orbit 1s linear infinite; margin-bottom: 1.5rem; }
-
-@keyframes orbit { 0% { transform: rotate(0deg); } 100% { transform: rotate(360deg); } }
-
-/* Navigation Modal Styles */
-.btn-mini-nav { background: #333; border: 1px solid #444; color: #FFB800; padding: 0.5rem 1rem; border-radius: 12px; font-weight: 600; font-size: 0.9rem; margin-top: 0.5rem; cursor: pointer; }
-
-.nav-modal-overlay { position: absolute; inset: 0; background: rgba(0,0,0,0.8); backdrop-filter: blur(5px); z-index: 200; display: flex; align-items: center; justify-content: center; padding: 2rem; }
-.nav-modal-content { background: #242424; width: 100%; max-width: 320px; border-radius: 28px; padding: 2rem; text-align: center; box-shadow: 0 20px 40px rgba(0,0,0,0.4); border: 1px solid #333; }
-.nav-modal-content h3 { color: #fff; margin: 0 0 0.5rem 0; font-size: 1.4rem; }
-.nav-modal-content p { color: #888; margin-bottom: 2rem; font-size: 0.95rem; }
-
-.nav-options { display: flex; flex-direction: column; gap: 1rem; margin-bottom: 1.5rem; }
-.nav-opt-btn { display: flex; align-items: center; gap: 1rem; padding: 1.2rem; border-radius: 18px; border: none; color: #fff; font-weight: 700; font-size: 1.1rem; cursor: pointer; transition: transform 0.1s; }
-.nav-opt-btn:active { transform: scale(0.97); }
-.nav-opt-btn.google { background: #4285F4; }
-.nav-opt-btn.waze { background: #33CCFF; color: #000; }
-.nav-opt-btn.self-nav { background: #9C27B0; }
-.nav-opt-btn .icon { font-size: 1.4rem; }
-
-.tracking-notice { color: #FFB800; font-size: 0.85rem; margin: 1rem 0; padding: 0.75rem 1rem; background: rgba(255, 184, 0, 0.1); border-radius: 8px; border-left: 3px solid #FFB800; }
-
-.btn-close-modal { background: none; border: none; color: #666; font-weight: 600; cursor: pointer; padding: 0.5rem; font-size: 0.9rem; }
-
-.nav-btn-group { display: flex; gap: 0.5rem; justify-content: center; align-items: center; }
-.btn-mini-nav.settings { color: #888; border-color: #333; }
-
-.completion-toast {
-   position: fixed;
-   bottom: 100px;
-   left: 50%;
-   transform: translateX(-50%);
-   background: #10b981;
-   color: #fff;
-   padding: 1rem 2rem;
-   border-radius: 30px;
-   font-weight: 700;
-   box-shadow: 0 10px 30px rgba(0,0,0,0.5);
-   z-index: 1000;
-   animation: slideUp 0.3s ease;
-   text-align: center;
-   width: 80%;
-   max-width: 300px;
+.wallet-bounce {
+  animation: walletBounce 0.65s cubic-bezier(0.36, 0.07, 0.19, 0.97) forwards;
 }
-@keyframes slideUp { from { transform: translate(-50%, 20px); opacity: 0; } to { transform: translate(-50%, 0); opacity: 1; } }
+
+/* Disabled placeholder */
+.sheet-btn-disabled {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  padding: 26px 24px;
+  border-radius: 24px;
+  background: #f3f4f6;
+  color: #9ca3af;
+  font-size: 16px;
+  font-weight: 600;
+  text-align: center;
+  cursor: not-allowed;
+  user-select: none;
+}
+
+/* ── Transitions ────────────────────────────────────────────── */
+
+.fade-enter-active, .fade-leave-active { transition: opacity 0.4s ease; }
+.fade-enter-from, .fade-leave-to { opacity: 0; }
+
+.slide-up-enter-active, .slide-up-leave-active { transition: all 0.35s cubic-bezier(0.4, 0, 0.2, 1); }
+.slide-up-enter-from, .slide-up-leave-to { opacity: 0; transform: translateY(24px); }
+
+.toast-drop-enter-active { transition: all 0.35s cubic-bezier(0.34, 1.15, 0.64, 1); }
+.toast-drop-leave-active { transition: all 0.25s ease; }
+.toast-drop-enter-from { opacity: 0; transform: translateY(-16px) scale(0.95); }
+.toast-drop-leave-to   { opacity: 0; transform: translateY(-8px); }
+
+.expand-enter-active, .expand-leave-active { transition: all 0.25s ease; overflow: hidden; }
+.expand-enter-from, .expand-leave-to { opacity: 0; max-height: 0; }
+.expand-enter-to, .expand-leave-from { opacity: 1; max-height: 200px; }
 </style>

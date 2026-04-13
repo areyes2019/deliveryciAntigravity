@@ -8,6 +8,8 @@ import ReportsView from '../views/ReportsView.vue'
 import PricingConfigView from '../views/PricingConfigView.vue'
 import DriverSimulatorView from '../views/DriverSimulatorView.vue'
 import DriverAppView from '../views/DriverAppView.vue'
+import WalletView from '../views/WalletView.vue'
+import ProfileView from '../views/ProfileView.vue'
 import { useAuthStore } from '../stores/auth'
 
 const router = createRouter({
@@ -35,6 +37,18 @@ const router = createRouter({
       path: '/driver',
       name: 'driver-app',
       component: DriverAppView,
+      meta: { requiresAuth: true, roles: ['driver'] }
+    },
+    {
+      path: '/wallet',
+      name: 'wallet',
+      component: WalletView,
+      meta: { requiresAuth: true, roles: ['driver'] }
+    },
+    {
+      path: '/profile',
+      name: 'profile',
+      component: ProfileView,
       meta: { requiresAuth: true, roles: ['driver'] }
     },
     {

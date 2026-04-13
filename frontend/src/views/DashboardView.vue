@@ -5,6 +5,41 @@ import api from '../api'
 import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 
+const buildDriverMapIcon = (highlight = false) => {
+  const outline = highlight ? '#0F766E' : '#082F49'
+  const shell = highlight ? '#99F6E4' : '#A5DDEB'
+  const body = highlight ? '#115E59' : '#0C4A5E'
+  const accent = highlight ? '#22C55E' : '#FF5A47'
+  const handle = highlight ? '#34D399' : '#F6C445'
+  const svg = `
+    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
+      <path d="M22 2 C27 2, 31 8, 32 13 L33 18 C34 20, 34 25, 33 28 L33 33 C33 39, 28 42, 22 42 C16 42, 11 39, 11 33 L11 28 C10 25, 10 20, 11 18 L12 13 C13 8, 17 2, 22 2 Z" fill="${shell}"/>
+      <path d="M22 4 C25 4, 29 9, 29 13 L29 19 C29 22, 27 24, 26 25 L18 25 C17 24, 15 22, 15 19 L15 13 C15 9, 19 4, 22 4 Z" fill="${outline}"/>
+      <path d="M18 20 H26 C28 23, 30 28, 30 34 C30 39, 27 41, 22 41 C17 41, 14 39, 14 34 C14 28, 16 23, 18 20 Z" fill="${body}"/>
+      <path d="M16 10 H28 C28 12, 27 13, 25 13 H19 C17 13, 16 12, 16 10 Z" fill="${handle}"/>
+      <path d="M11 13 L4 14.5 C3 14.7, 2.6 15.8, 3.5 16.2 L7 16.6 C7.8 16.7, 8.6 16.4, 9.1 15.9 L13 14 Z" fill="${handle}"/>
+      <path d="M33 13 L40 14.5 C41 14.7, 41.4 15.8, 40.5 16.2 L37 16.6 C36.2 16.7, 35.4 16.4, 34.9 15.9 L31 14 Z" fill="${handle}"/>
+      <path d="M13 14.2 L8 19.3 L6.8 18.5 L10.2 13.8 Z" fill="${accent}"/>
+      <path d="M31 14.2 L36 19.3 L37.2 18.5 L33.8 13.8 Z" fill="${accent}"/>
+      <path d="M16 11.5 C16 8.5, 19 6.6, 22 6.6 C25 6.6, 28 8.5, 28 11.5 C25.8 14, 18.2 14, 16 11.5 Z" fill="${accent}"/>
+      <path d="M20 33.6 H24 C24 36.5, 23.3 39, 22 42 C20.7 39, 20 36.5, 20 33.6 Z" fill="${accent}"/>
+    </svg>
+  `.trim()
+
+  return {
+    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
+    scaledSize: { width: 28, height: 28 },
+    anchor: { x: 14, y: 14 }
+  }
+}
+
+const DRIVER_MAP_ICON = buildDriverMapIcon(false)
+const DRIVER_MAP_ICON_HIGHLIGHT = buildDriverMapIcon(true)
+
+const createDriverMapIcon = (highlight = false) => {
+  return highlight ? DRIVER_MAP_ICON_HIGHLIGHT : DRIVER_MAP_ICON
+}
+
 // --- Notification Toasts ---
 const toasts = ref([])
 const showToast = (message, type = 'success') => {
@@ -33,7 +68,8 @@ const stats = ref({
   totalClients: 0,
   totalDrivers: 0,
   activeOrders: 0,
-  balance: 0
+  balance: 0,
+  fleetBalance: 0
 })
 
 const recentActivity = ref([])
@@ -63,14 +99,16 @@ const silentUpdate = async () => {
         if (ordersRes.data.status) {
             const newOrders = ordersRes.data.data
             
-            // Check for status transitions (Transitions: publicado -> tomado/en_camino, or en_camino -> entregado)
+            // Check for key status transitions in the active delivery flow.
             newOrders.forEach(order => {
                 const old = oldOrders.find(o => o.id === order.id)
                 if (old && old.status !== order.status) {
                     const driver = driversRes.data.data.find(d => String(d.id) === String(order.driver_id))
                     
-                    if (old.status === 'publicado' && (order.status === 'tomado' || order.status === 'en_camino')) {
+                    if (old.status === 'publicado' && (order.status === 'tomado' || order.status === 'arribado' || order.status === 'en_camino')) {
                         showToast(`✅ Viaje #${order.id} aceptado por ${driver?.name || 'un conductor'}`, 'success')
+                    } else if (old.status === 'tomado' && order.status === 'arribado') {
+                        showToast(`📍 Viaje #${order.id} llegó al punto de recogida`, 'info')
                     } else if (old.status === 'en_camino' && order.status === 'entregado') {
                         showToast(`🏁 Viaje #${order.id} completado con éxito por ${driver?.name || 'el conductor'}`, 'success')
                     }
@@ -78,12 +116,13 @@ const silentUpdate = async () => {
             })
 
             orders.value = newOrders
-            stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status)).length
+            stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
         }
 
         if (driversRes.data.status) {
             drivers.value = driversRes.data.data
             stats.value.totalDrivers = drivers.value.length
+            stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
             
             // Update Markers on map silently
             if (viewMode.value === 'map') {
@@ -104,7 +143,7 @@ const updateMapMarkers = () => {
         const lng = parseFloat(driver.current_lng);
         if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
             MapService.updateMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: '🏍️',
+                icon: createDriverMapIcon(isDriverEnRoute(driver)),
                 className: 'driver',
                 popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
             });
@@ -112,7 +151,7 @@ const updateMapMarkers = () => {
     });
 
     // 2. Manage Order Markers
-    const activeOrderStatuses = ['publicado', 'tomado', 'en_camino'];
+    const activeOrderStatuses = ['publicado', 'tomado', 'arribado', 'en_camino'];
     
     // We'll iterate through all known orders to sync the map
     orders.value.forEach(order => {
@@ -167,7 +206,7 @@ const isDriverEnRoute = (driver) => {
     return orders.value.some(o => {
         const orderDate = new Date(o.created_at);
         return String(o.driver_id) === String(driver.id) && 
-               (o.status === 'tomado' || o.status === 'en_camino') &&
+               (o.status === 'tomado' || o.status === 'arribado' || o.status === 'en_camino') &&
                orderDate > twelveHoursAgo;
     })
 }
@@ -180,7 +219,7 @@ const fetchDashboardData = async () => {
     const ordersRes = await api.get('/orders')
     if (ordersRes.data.status) {
         orders.value = ordersRes.data.data
-        stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status)).length
+        stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
         console.log('📦 Pedidos recibidos:', orders.value.length);
     }
 
@@ -192,6 +231,7 @@ const fetchDashboardData = async () => {
       const driversRes = await api.get('/drivers')
       drivers.value = driversRes.data.data
       stats.value.totalDrivers = drivers.value.length
+      stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
       console.log('🏎️ Conductores recibidos:', drivers.value.length);
       
       const meRes = await api.get('/auth/me')
@@ -220,7 +260,7 @@ const redrawDrivers = () => {
         const lng = parseFloat(driver.current_lng);
         if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
             MapService.addMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: '🏍️',
+                icon: createDriverMapIcon(isDriverEnRoute(driver)),
                 className: 'driver',
                 popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
             })
@@ -242,7 +282,7 @@ const initDashboardMap = async () => {
     redrawDrivers()
 
     // Add active orders to map
-    const activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'en_camino'].includes(o.status));
+    const activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status));
     activeOrders.forEach(order => {
         const pickupLat = parseFloat(order.pickup_lat);
         const pickupLng = parseFloat(order.pickup_lng);
@@ -299,7 +339,7 @@ const selectOrder = async (order) => {
             const dLng = parseFloat(assignedDriver.current_lng)
             if (!isNaN(dLat) && dLat !== 0) {
                 MapService.addMarker(`driver-${assignedDriver.id}`, [dLat, dLng], {
-                    icon: '🟢🏍️',
+                    icon: createDriverMapIcon(true),
                     popup: `<b>Asignado:</b> ${assignedDriver.name}`
                 });
             }
@@ -370,7 +410,7 @@ const pendingOrders = computed(() => {
 })
 
 const activeOrdersList = computed(() => {
-    return orders.value.filter(o => ['tomado', 'en_camino'].includes(o.status))
+    return orders.value.filter(o => ['tomado', 'arribado', 'en_camino'].includes(o.status))
 })
 
 const activeDrivers = computed(() => {
@@ -416,8 +456,16 @@ const activeDrivers = computed(() => {
       <div class="stat-card">
         <div class="stat-icon balance">💰</div>
         <div class="stat-info">
-          <p class="stat-label">{{ role === 'superadmin' ? 'Saldo Total Sistema' : 'Saldo en Cartera' }}</p>
-          <h3 class="stat-value">${{ stats.balance }}</h3>
+          <p class="stat-label">{{ role === 'superadmin' ? 'Saldo Total Sistema' : 'Mi Saldo (Créditos)' }}</p>
+          <h3 class="stat-value">${{ stats.balance.toFixed(2) }}</h3>
+        </div>
+      </div>
+
+      <div class="stat-card" v-if="role === 'client_admin'">
+        <div class="stat-icon fleet">🏦</div>
+        <div class="stat-info">
+          <p class="stat-label">Efectivo en Flota</p>
+          <h3 class="stat-value">${{ stats.fleetBalance.toFixed(2) }}</h3>
         </div>
       </div>
     </div>
@@ -470,7 +518,9 @@ const activeDrivers = computed(() => {
                                  :class="{ active: selectedOrder?.id === order.id }">
                                 <div class="order-header">
                                     <span class="id">🏍️ #{{ order.id }}</span>
-                                    <span class="status-tag" :class="order.status">{{ order.status === 'tomado' ? 'Aceptado' : 'En Camino' }}</span>
+                                    <span class="status-tag" :class="order.status">
+                                      {{ order.status === 'tomado' ? 'Aceptado' : order.status === 'arribado' ? 'En Recogida' : 'En Camino' }}
+                                    </span>
                                 </div>
                                 <div class="driver-assigned" v-if="order.driver_id">
                                     <small>Conductor: {{ drivers.find(d => String(d.id) === String(order.driver_id))?.name || 'Asignado' }}</small>
@@ -600,7 +650,12 @@ const activeDrivers = computed(() => {
                                     {{ isDriverEnRoute(driver) ? 'En Ruta' : 'Libre' }}
                                 </span>
                             </div>
-                            <p>{{ driver.vehicle_details || 'Vehículo estándar' }}</p>
+                            <div class="balance-row">
+                                <span class="driver-balance" :class="{ 'has-debt': driver.balance > 0 }">
+                                    Saldo: ${{ (driver.balance || 0).toFixed(2) }}
+                                </span>
+                                <span class="vehicle-small">{{ driver.vehicle_details || 'Vehículo estándar' }}</span>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -656,6 +711,7 @@ const activeDrivers = computed(() => {
 .stat-icon.drivers { background: #F0F9FF; }
 .stat-icon.orders { background: #FEF3C7; }
 .stat-icon.balance { background: #DCFCE7; }
+.stat-icon.fleet { background: #FEF2F2; }
 .stat-label { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.25rem; }
 .stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text-main); }
 
@@ -785,6 +841,7 @@ const activeDrivers = computed(() => {
     text-transform: uppercase;
 }
 .status-tag.tomado { background: #D1FAE5; color: #065F46; }
+.status-tag.arribado { background: #E0F2FE; color: #075985; }
 .status-tag.en_camino { background: #DBEAFE; color: #1E40AF; }
 
 .driver-assigned {
@@ -891,6 +948,30 @@ const activeDrivers = computed(() => {
 /* Sidebar Cards Overrides */
 .driver-card { padding: 0.75rem 1rem !important; }
 .driver-info h4 { margin: 0; font-size: 0.85rem; }
+
+.balance-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.driver-balance {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #64748b;
+}
+
+.driver-balance.has-debt {
+    color: #166534;
+}
+
+.vehicle-small {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
 
 @media (max-width: 900px) {
     .dashboard-map-container { flex-direction: column; }

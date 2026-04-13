@@ -1,5 +1,5 @@
 <script setup>
-import { ref, onMounted, nextTick, watch } from 'vue'
+import { ref, onMounted, watch } from 'vue'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 
@@ -10,7 +10,8 @@ const isEditing = ref(false)
 const config = ref({
     pricing_mode: 'distance',
     base_fare: 0,
-    price_per_km: 0
+    price_per_km: 0,
+    min_distance_km: 0
 })
 
 const zones = ref([])
@@ -27,6 +28,7 @@ const fetchConfig = async () => {
             config.value.pricing_mode = meRes.data.data.client.pricing_mode || 'distance'
             config.value.base_fare = parseFloat(meRes.data.data.client.base_fare) || 0
             config.value.price_per_km = parseFloat(meRes.data.data.client.price_per_km) || 0
+            config.value.min_distance_km = parseFloat(meRes.data.data.client.min_distance_km) || 0
         }
     } catch (e) {
         console.error('Error fetching config:', e)
@@ -254,7 +256,11 @@ onMounted(() => {
                         <span class="value">${{ config.base_fare.toFixed(2) }}</span>
                     </div>
                     <div class="stat-row">
-                        <span class="label">Costo por Kilómetro:</span>
+                        <span class="label">Km mínimo incluido:</span>
+                        <span class="value">{{ config.min_distance_km.toFixed(1) }} km</span>
+                    </div>
+                    <div class="stat-row">
+                        <span class="label">Costo por Km adicional:</span>
                         <span class="value">${{ config.price_per_km.toFixed(2) }}</span>
                     </div>
                 </template>
@@ -272,8 +278,9 @@ onMounted(() => {
     </div>
 
     <!-- EDIT MODE -->
-    <div v-else class="content-split">
-        <!-- GLOBAL PREFS -->
+    <div v-else class="content-split" :class="{ 'three-cols': config.pricing_mode === 'zone' }">
+
+        <!-- COL 1 — Estrategia Principal (angosta) -->
         <div class="config-panel">
             <h3>Estrategia Principal</h3>
             <div class="form-group">
@@ -289,64 +296,80 @@ onMounted(() => {
                 <h4>Ajustes de Distancia</h4>
                 <div class="form-group">
                     <label>Tarifa Base ($)</label>
-                    <input type="number" step="0.5" v-model="config.base_fare" placeholder="0.00">
+                    <input type="number" step="0.5" min="0" v-model="config.base_fare" placeholder="0.00">
                 </div>
                 <div class="form-group">
-                    <label>Precio por Km ($)</label>
-                    <input type="number" step="0.5" v-model="config.price_per_km" placeholder="0.00">
+                    <label>Km mínimo incluido</label>
+                    <input type="number" step="0.5" min="0" v-model="config.min_distance_km" placeholder="0">
+                    <span class="field-hint">La tarifa base cubre los primeros {{ config.min_distance_km || 0 }} km.</span>
+                </div>
+                <div class="form-group">
+                    <label>Precio por Km adicional ($)</label>
+                    <input type="number" step="0.5" min="0" v-model="config.price_per_km" placeholder="0.00">
                 </div>
             </div>
 
             <!-- ZONE CONFIG INFO -->
             <div v-if="config.pricing_mode === 'zone'" class="mode-config-box">
-                <h4>Ajustes por Zona</h4>
+                <h4>Modo Zona</h4>
                 <div class="rules-info">
-                    <p><b>Reglas:</b></p>
-                    <ul style="padding-left:1rem;margin-top:0.5rem;font-size:0.85rem">
-                        <li>Misma zona (Origen - Destino): Tarifa de la zona.</li>
-                        <li>Cruce de zonas: Suma de la tarifa de ambas zonas.</li>
-                        <li>Puntos sin zona: Rechaza la orden de envío.</li>
+                    <ul>
+                        <li>Misma zona: tarifa de la zona.</li>
+                        <li>Cruce: máximo de ambas tarifas.</li>
+                        <li>Sin zona: orden rechazada.</li>
                     </ul>
                 </div>
             </div>
 
-            <button class="btn-primary mt-4" @click="saveConfig" :disabled="saving">
-                {{ saving ? 'Guardando...' : 'Guardar Configuración' }}
-            </button>
-            <button class="btn-cancel mt-4" style="margin-left:1rem" @click="isEditing = false" :disabled="saving">
-                Cancelar
-            </button>
+            <div class="action-btns">
+                <button class="btn-primary" @click="saveConfig" :disabled="saving">
+                    {{ saving ? 'Guardando...' : 'Guardar' }}
+                </button>
+                <button class="btn-cancel" @click="isEditing = false" :disabled="saving">
+                    Cancelar
+                </button>
+            </div>
         </div>
 
-        <!-- ZONES EDITOR -->
+        <!-- COL 2 — Gestión de Zonas (ancha, con mapa grande) -->
         <div class="zone-panel" v-if="config.pricing_mode === 'zone'">
             <h3>Gestión de Zonas</h3>
-            
+
             <div class="map-container-wrapper">
-                <div id="zone-map" style="width:100%;height:450px;border-radius:12px;overflow:hidden"></div>
+                <div id="zone-map" style="width:100%;height:580px;border-radius:12px;overflow:hidden"></div>
                 <div class="map-help">
-                    Utiliza la herramienta ⬟ del mapa para trazar un polígono cerrado.
+                    Usa la herramienta ⬟ del mapa para trazar un polígono cerrado, luego nómbralo y guárdalo.
                 </div>
             </div>
 
             <div class="new-zone-form">
                 <input type="text" v-model="newZone.name" placeholder="Nombre (Ej. Centro, Norte)">
-                <input type="number" v-model="newZone.base_price" placeholder="Tarifa ($)">
-                <button class="btn-secondary" @click="saveZone">Guardar Zona Trazada</button>
+                <input type="number" v-model="newZone.base_price" placeholder="Tarifa base ($)">
+                <button class="btn-primary save-zone-btn" @click="saveZone">+ Guardar Zona</button>
             </div>
+        </div>
 
-            <h4 class="mt-4">Zonas Creadas</h4>
+        <!-- COL 3 — Geo Zonas (lista, derecha) -->
+        <div class="zones-column" v-if="config.pricing_mode === 'zone'">
+            <h3>Geo Zonas</h3>
+            <p class="zones-column-hint">{{ zones.length }} zona{{ zones.length !== 1 ? 's' : '' }} configurada{{ zones.length !== 1 ? 's' : '' }}</p>
+
             <div class="zones-list">
-                <div v-if="zones.length === 0" class="empty">No hay zonas definidas.</div>
+                <div v-if="zones.length === 0" class="empty">
+                    <span class="empty-icon">🗺️</span>
+                    <p>Traza tu primera zona en el mapa.</p>
+                </div>
                 <div v-for="z in zones" :key="z.id" class="zone-item">
+                    <div class="z-color-dot"></div>
                     <div class="z-info">
                         <strong>{{ z.name }}</strong>
-                        <span class="z-price">${{ z.base_price }} base</span>
+                        <span class="z-price">${{ parseFloat(z.base_price).toFixed(2) }}</span>
                     </div>
-                    <button class="btn-danger btn-sm" @click="deleteZone(z.id)">✕</button>
+                    <button class="btn-danger btn-sm" @click="deleteZone(z.id)" title="Eliminar zona">✕</button>
                 </div>
             </div>
         </div>
+
     </div>
   </div>
 </template>
@@ -356,7 +379,8 @@ onMounted(() => {
 .page-header h1 { font-size: 1.75rem; font-weight: 700; margin-bottom: 0.25rem; }
 .page-header p { color: var(--text-muted); font-size: 0.95rem; }
 
-.content-split { display: grid; grid-template-columns: 1fr 2.5fr; gap: 2rem; align-items: start; }
+.content-split { display: grid; grid-template-columns: 260px 1fr; gap: 1.5rem; align-items: start; }
+.content-split.three-cols { grid-template-columns: 260px 1fr 280px; }
 
 /* Summary */
 .summary-view { display: flex; justify-content: center; }
@@ -386,24 +410,61 @@ onMounted(() => {
 .mode-config-box { background: #F9FAFB; padding: 1rem; border-radius: 8px; border: 1px dashed #D1D5DB; }
 .mode-config-box h4 { font-size: 0.9rem; margin-bottom: 1rem; font-weight: 600; }
 
-.mt-4 { margin-top: 1rem; }
+.action-btns { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.25rem; }
 
 .map-container-wrapper { position: relative; border: 1px solid #D1D5DB; border-radius: 12px; margin-bottom: 1rem; }
-.map-help { padding: 0.5rem; font-size: 0.75rem; color: #6B7280; text-align: center; background: #F3F4F6; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px;}
+.map-help { padding: 0.5rem 1rem; font-size: 0.75rem; color: #6B7280; text-align: center; background: #F3F4F6; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
 
-.new-zone-form { display: flex; gap: 0.5rem; }
-.new-zone-form input { flex: 1; padding: 0.5rem; border: 1px solid #D1D5DB; border-radius: 6px; }
+.new-zone-form { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.new-zone-form input { flex: 1; min-width: 100px; padding: 0.55rem 0.75rem; border: 1px solid #D1D5DB; border-radius: 6px; font-family: inherit; font-size: 0.875rem; }
 
-.zones-list { display: flex; flex-direction: column; gap: 0.5rem; }
-.zone-item { display: flex; justify-content: space-between; align-items: center; padding: 0.75rem; background: #F9FAFB; border-radius: 6px; border: 1px solid #E5E7EB; }
-.z-info strong { display: block; color: #1F2937; font-size: 0.9rem; }
-.z-info .z-price { font-size: 0.8rem; color: #10B981; font-weight: 700; }
-.btn-sm { padding: 0.25rem 0.5rem; font-size: 0.8rem; border-radius: 4px; }
-.btn-danger { background: #FEE2E2; color: #DC2626; border: none; cursor: pointer; }
-.btn-cancel { background: white; color: #374151; padding: 0.8rem 1.5rem; border-radius: 8px; border: 1px solid #D1D5DB; font-weight: 600; cursor: pointer; transition: all 0.2s; }
+/* ── Geo Zonas column ─────────────────────────────────────────── */
+.zones-column {
+    background: white;
+    border-radius: 16px;
+    padding: 1.5rem;
+    box-shadow: 0 4px 6px rgba(0,0,0,0.05);
+    border: 1px solid var(--border-light);
+    position: sticky;
+    top: 1rem;
+}
+.zones-column h3 { font-size: 1.1rem; font-weight: 700; margin-bottom: 0.25rem; }
+.zones-column-hint { font-size: 0.8rem; color: #6B7280; margin-bottom: 1rem; }
+
+.zones-list { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 0.5rem; }
+
+.empty { display: flex; flex-direction: column; align-items: center; gap: 0.5rem; padding: 2rem 1rem; color: #9CA3AF; font-size: 0.85rem; text-align: center; }
+.empty-icon { font-size: 2rem; }
+
+.zone-item {
+    display: flex;
+    align-items: center;
+    gap: 0.6rem;
+    padding: 0.65rem 0.75rem;
+    background: #F9FAFB;
+    border-radius: 8px;
+    border: 1px solid #E5E7EB;
+    transition: border-color 0.15s;
+}
+.zone-item:hover { border-color: #A5B4FC; }
+.z-color-dot { width: 10px; height: 10px; border-radius: 50%; background: #10B981; flex-shrink: 0; }
+.z-info { flex: 1; min-width: 0; }
+.z-info strong { display: block; color: #1F2937; font-size: 0.875rem; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.z-info .z-price { font-size: 0.78rem; color: #10B981; font-weight: 700; }
+
+.btn-sm { padding: 0.2rem 0.45rem; font-size: 0.75rem; border-radius: 4px; line-height: 1.4; }
+.btn-danger { background: #FEE2E2; color: #DC2626; border: none; cursor: pointer; flex-shrink: 0; }
+.btn-danger:hover { background: #FECACA; }
+.btn-cancel { background: white; color: #374151; padding: 0.7rem 1rem; border-radius: 8px; border: 1px solid #D1D5DB; font-weight: 600; cursor: pointer; transition: all 0.2s; width: 100%; }
 .btn-cancel:hover { background: #F3F4F6; }
 
-@media (max-width: 800px) {
-    .content-split { grid-template-columns: 1fr; }
+.save-zone-btn { padding: 0.55rem 1.25rem; white-space: nowrap; }
+
+.field-hint { display: block; font-size: 0.75rem; color: #6B7280; margin-top: 0.3rem; }
+.rules-info ul { padding-left: 1rem; margin-top: 0.5rem; font-size: 0.82rem; color: #4B5563; line-height: 1.7; }
+
+@media (max-width: 900px) {
+    .content-split,
+    .content-split.three-cols { grid-template-columns: 1fr; }
 }
 </style>

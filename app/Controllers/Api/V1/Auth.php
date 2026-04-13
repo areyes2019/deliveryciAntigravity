@@ -48,14 +48,16 @@ class Auth extends BaseController
             'role'  => $user['role'],
         ]);
 
+        // Attach profile data
+        $profile = $this->getUserProfile($user);
+        $user = array_merge($user, $profile);
+
+        unset($user['id']);
+        unset($user['password']);
+
         return $this->respondSuccess('Login successful', [
             'token' => $token,
-            'user'  => [
-                'uuid'  => $user['uuid'],
-                'name'  => $user['name'],
-                'email' => $user['email'],
-                'role'  => $user['role']
-            ]
+            'user'  => $user
         ]);
     }
 
@@ -74,19 +76,36 @@ class Auth extends BaseController
             return $this->respondError('User not found', [], 404);
         }
 
-        if ($user['role'] === 'client_admin') {
-            $clientModel = new \App\Models\ClientModel();
-            $client = $clientModel->where('user_id', $user['id'])->first();
-            if ($client) {
-                $user['client'] = $client;
-                $user['client_balance'] = $client['credits_balance'];
-                $user['cost_per_trip'] = $client['cost_per_trip'];
-            }
-        }
+        $profile = $this->getUserProfile($user);
+        $user = array_merge($user, $profile);
 
         unset($user['id']);
         unset($user['password']);
 
         return $this->respondSuccess('User details', $user);
+    }
+
+    /**
+     * Helper to fetch role-specific profile data
+     */
+    private function getUserProfile(array $user): array
+    {
+        $data = [];
+        if ($user['role'] === 'client_admin') {
+            $clientModel = new \App\Models\ClientModel();
+            $client = $clientModel->where('user_id', $user['id'])->first();
+            if ($client) {
+                $data['client'] = $client;
+                $data['client_balance'] = $client['credits_balance'];
+                $data['cost_per_trip'] = $client['cost_per_trip'];
+            }
+        } elseif ($user['role'] === 'driver') {
+            $driverModel = new \App\Models\DriverModel();
+            $driver = $driverModel->where('user_id', $user['id'])->first();
+            if ($driver) {
+                $data['driver'] = $driver;
+            }
+        }
+        return $data;
     }
 }

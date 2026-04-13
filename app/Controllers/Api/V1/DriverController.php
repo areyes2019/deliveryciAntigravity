@@ -6,6 +6,7 @@ use App\Controllers\BaseController;
 use App\Models\UserModel;
 use App\Models\ClientModel;
 use App\Models\DriverModel;
+use App\Models\WalletMovementModel;
 use App\Traits\ApiResponseTrait;
 use Config\Database;
 
@@ -22,25 +23,27 @@ class DriverController extends BaseController
 
         $driverModel = new DriverModel();
         
+        // Define subquery for balance
+        $balanceSubquery = '(SELECT COALESCE(SUM(amount), 0) FROM wallet_movements WHERE driver_id = drivers.id) as balance';
+        
         if ($userData['role'] === 'client_admin') {
-            // Get client profile for the logged in user
             $clientModel = new ClientModel();
             $client = $clientModel->where('user_id', $userData['id'])->first();
             
-            if (!$client) {
-                return $this->respondError('Client profile not found.', [], 404);
-            }
-            
-            $drivers = $driverModel->select('drivers.*, users.name, users.email')
+            $drivers = $driverModel->select("drivers.*, users.name, users.email, $balanceSubquery")
                                    ->join('users', 'users.id = drivers.user_id')
                                    ->where('drivers.client_id', $client['id'])
                                    ->findAll();
         } else {
-            // SuperAdmin can see all drivers
-            $drivers = $driverModel->select('drivers.*, users.name, users.email, clients.business_name')
+            $drivers = $driverModel->select("drivers.*, users.name, users.email, clients.business_name, $balanceSubquery")
                                    ->join('users', 'users.id = drivers.user_id')
                                    ->join('clients', 'clients.id = drivers.client_id')
                                    ->findAll();
+        }
+
+        // Ensure balance is numeric and default to 0
+        foreach ($drivers as &$driver) {
+            $driver['balance'] = (float)($driver['balance'] ?? 0);
         }
 
         return $this->respondSuccess('Drivers retrieved successfully.', $drivers);
@@ -205,6 +208,28 @@ class DriverController extends BaseController
         }
 
         return $this->respondSuccess('Driver deleted successfully.');
+    }
+
+    public function goOffline()
+    {
+        $userData = $this->request->jwtPayload ?? null;
+        if (!$userData || $userData['role'] !== 'driver') {
+            return $this->respondUnauthorized('Only drivers can update their availability.');
+        }
+
+        $driverModel = new DriverModel();
+        $driver = $driverModel->where('user_id', $userData['id'])->first();
+
+        if (!$driver) {
+            return $this->respondError('Driver profile not found.', [], 404);
+        }
+
+        $driverModel->update($driver['id'], ['is_active' => 0]);
+
+        return $this->respondSuccess('Te has desconectado exitosamente.', [
+            'is_active' => 0,
+            'status'    => 'offline'
+        ]);
     }
 
     public function toggleAvailability()

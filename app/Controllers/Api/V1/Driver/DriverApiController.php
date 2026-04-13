@@ -6,6 +6,7 @@ use App\Controllers\BaseController;
 use App\Models\DriverModel;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
+use App\Services\WalletService;
 use App\Traits\ApiResponseTrait;
 
 class DriverApiController extends BaseController
@@ -113,29 +114,62 @@ class DriverApiController extends BaseController
         $input = $this->request->getJSON(true) ?? $this->request->getPost();
         $newStatus = $input['status'] ?? null;
 
-        $allowedStatuses = ['arribado', 'en_camino', 'entregado'];
-        if (!in_array($newStatus, $allowedStatuses)) {
+        $allowedTransitions = [
+            'tomado' => ['arribado'],
+            'arribado' => ['en_camino'],
+            'en_camino' => ['entregado'],
+        ];
+
+        if (!isset($allowedTransitions[$order['status']]) || !in_array($newStatus, $allowedTransitions[$order['status']], true)) {
             return $this->respondError('Invalid status update.');
         }
 
         $previousStatus = $order['status'];
 
         $db = \Config\Database::connect();
-        $db->transStart();
+        $db->transBegin();
 
-        $this->orderModel->update($id, ['status' => $newStatus]);
+        try {
+            $updateData = ['status' => $newStatus];
+            if ($newStatus === 'entregado') {
+                $updateData['paid'] = 1;
+            }
 
-        $statusLogModel = new OrderStatusLogModel();
-        $statusLogModel->insert([
-            'order_id'        => $id,
-            'previous_status' => $previousStatus,
-            'new_status'      => $newStatus
-        ]);
+            $db->table('orders')
+                ->where('id', $id)
+                ->where('driver_id', $driver['id'])
+                ->where('status', $previousStatus)
+                ->update($updateData);
 
-        $db->transComplete();
+            if ($db->affectedRows() !== 1) {
+                $db->transRollback();
+                return $this->respondError('Trip status was already updated from another request.', [], 409);
+            }
 
-        if ($db->transStatus() === false) {
-            return $this->respondError('Failed to update trip status.');
+            $statusLogModel = new OrderStatusLogModel();
+            $statusLogModel->insert([
+                'order_id'        => $id,
+                'previous_status' => $previousStatus,
+                'new_status'      => $newStatus
+            ]);
+
+            if ($newStatus === 'entregado' && (float)($order['total_to_collect'] ?? 0) > 0) {
+                $walletService = new WalletService();
+                $walletService->addIncomeFromTrip(
+                    $driver['id'],
+                    (int)$id,
+                    (float)$order['total_to_collect']
+                );
+            }
+
+            if ($db->transStatus() === false) {
+                throw new \RuntimeException('Failed to update trip status.');
+            }
+
+            $db->transCommit();
+        } catch (\Throwable $e) {
+            $db->transRollback();
+            return $this->respondError($e->getMessage());
         }
 
         return $this->respondSuccess('Trip status updated to ' . $newStatus);
@@ -179,7 +213,7 @@ class DriverApiController extends BaseController
         }
 
         $order = $this->orderModel->where('driver_id', $driver['id'])
-                                   ->whereIn('status', ['tomado', 'en_camino'])
+                                   ->whereIn('status', ['tomado', 'arribado', 'en_camino'])
                                    ->first();
 
         return $this->respondSuccess('Current trip retrieved.', $order);

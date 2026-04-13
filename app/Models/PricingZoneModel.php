@@ -12,7 +12,7 @@ class PricingZoneModel extends Model
     protected $returnType       = 'array';
     protected $useSoftDeletes   = false;
     protected $protectFields    = true;
-    protected $allowedFields    = ['client_id', 'name', 'polygon_coordinates', 'base_price'];
+    protected $allowedFields    = ['client_id', 'name', 'polygon_coordinates', 'base_price', 'increment_price'];
 
     // Dates
     protected $useTimestamps = true;

@@ -72,6 +72,12 @@ class MapService {
     }
   }
 
+  destroy() {
+    if (this.provider) {
+      this.provider.destroy()
+    }
+  }
+
   getNativeMap() {
     return this.provider.map;
   }
