@@ -90,6 +90,7 @@ const menuItems = computed(() => {
     { name: 'Conductores', path: '/drivers', icon: '🏎️', roles: ['client_admin'] },
     { name: 'Envíos', path: '/orders', icon: '📦', roles: ['client_admin'] },
     { name: 'Precios', path: '/pricing', icon: '💲', roles: ['client_admin'] },
+    { name: 'Cobro', path: '/driver-billing', icon: '🤝', roles: ['client_admin'] },
     { name: 'Reportes', path: '/reports', icon: '📈', roles: ['superadmin', 'client_admin'] },
   ]
   return items.filter(item => item.roles.includes(role))

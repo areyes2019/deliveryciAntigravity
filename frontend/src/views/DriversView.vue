@@ -1,11 +1,26 @@
 <script setup>
-import { ref, onMounted } from 'vue'
+import { ref, computed, onMounted } from 'vue'
 import api from '../api'
 
-const drivers = ref([])
-const loading = ref(true)
-const showModal = ref(false)
+const drivers     = ref([])
+const loading     = ref(true)
+const showModal   = ref(false)
 const editingDriver = ref(null)
+
+// Billing config (needed to calculate credits preview)
+const billingConfig  = ref(null)
+const adminBalance   = ref(null)   // se actualiza tras cada recarga
+
+const fetchBillingConfig = async () => {
+  try {
+    const res = await api.get('/driver-billing')
+    if (res.data.status && res.data.data?.tipo_esquema) {
+      billingConfig.value = res.data.data
+    }
+  } catch (e) {
+    console.warn('No se pudo cargar la configuración de cobro:', e)
+  }
+}
 
 const form = ref({
   name: '',
@@ -16,16 +31,63 @@ const form = ref({
   is_suspended: 0
 })
 
-// Wallet Liquidations & History
-const showLiquidationModal = ref(false)
+// Recharge modal
+const showRechargeModal   = ref(false)
+const rechargingDriver    = ref(null)
+const rechargeForm        = ref({ amount: '', description: '' })
+const rechargeSaving      = ref(false)
+const rechargeError       = ref('')
+
+const creditosPreview = computed(() => {
+  const amount = parseFloat(rechargeForm.value.amount)
+  if (!billingConfig.value || billingConfig.value.tipo_esquema !== 'credito') return null
+  const precio = parseFloat(billingConfig.value.precio_credito)
+  if (!amount || amount <= 0 || !precio || precio <= 0) return null
+  return Math.floor(amount / precio)
+})
+
+const openRechargeModal = (driver) => {
+  rechargingDriver.value  = driver
+  rechargeForm.value      = { amount: '', description: 'Recarga de saldo' }
+  rechargeError.value     = ''
+  showRechargeModal.value = true
+}
+
+const submitRecharge = async () => {
+  rechargeError.value = ''
+  const amount = parseFloat(rechargeForm.value.amount)
+  if (!amount || amount <= 0) {
+    rechargeError.value = 'Ingresa un monto válido mayor a 0.'
+    return
+  }
+  rechargeSaving.value = true
+  try {
+    const res = await api.post('/wallet/recharge', {
+      driver_id:   rechargingDriver.value.id,
+      amount,
+      description: rechargeForm.value.description || 'Recarga de saldo'
+    })
+    if (res.data.status) {
+      if (res.data.data?.admin_balance !== undefined) {
+        adminBalance.value = res.data.data.admin_balance
+      }
+      showRechargeModal.value = false
+      fetchDrivers()
+    } else {
+      rechargeError.value = res.data.message || 'Error al cargar saldo.'
+    }
+  } catch (e) {
+    rechargeError.value = e.response?.data?.message || 'Error al cargar saldo.'
+  } finally {
+    rechargeSaving.value = false
+  }
+}
+
+// History modal
 const showHistoryModal = ref(false)
 const loadingHistory = ref(false)
 const selectedDriverForWallet = ref(null)
 const driverHistory = ref([])
-const liquidationForm = ref({
-  amount: 0,
-  description: ''
-})
 
 const fetchDrivers = async () => {
   loading.value = true
@@ -103,38 +165,6 @@ const deleteDriver = async (id) => {
   }
 }
 
-const openLiquidationModal = (driver) => {
-  selectedDriverForWallet.value = driver
-  liquidationForm.value = {
-    amount: driver.balance || 0,
-    description: `Liquidación de saldo al ${new Date().toLocaleDateString()}`
-  }
-  showLiquidationModal.value = true
-}
-
-const submitLiquidation = async () => {
-  if (liquidationForm.value.amount <= 0) {
-    alert('El monto debe ser mayor a 0')
-    return
-  }
-  
-  try {
-    const response = await api.post('/wallet/withdraw', {
-      driver_id: selectedDriverForWallet.value.id,
-      amount: liquidationForm.value.amount,
-      description: liquidationForm.value.description
-    })
-    
-    if (response.data.status) {
-      fetchDrivers()
-      showLiquidationModal.value = false
-    }
-  } catch (error) {
-    console.error('Error recording liquidation:', error)
-    alert(error.response?.data?.message || 'Error al registrar la liquidación')
-  }
-}
-
 const openHistoryModal = async (driver) => {
   selectedDriverForWallet.value = driver
   showHistoryModal.value = true
@@ -159,7 +189,10 @@ const formatDate = (dateStr) => {
   return d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
 }
 
-onMounted(fetchDrivers)
+onMounted(() => {
+  fetchDrivers()
+  fetchBillingConfig()
+})
 </script>
 
 <template>
@@ -188,7 +221,7 @@ onMounted(fetchDrivers)
             <th>Contacto</th>
             <th>Vehículo</th>
             <th class="text-center">Estado</th>
-            <th class="text-right">Saldo</th>
+            <th class="text-right">Saldo / Viajes</th>
             <th class="text-right">Acciones</th>
           </tr>
         </thead>
@@ -218,16 +251,23 @@ onMounted(fetchDrivers)
               </span>
             </td>
             <td class="text-right">
-              <span class="balance-tag" :class="{ 'has-balance': driver.balance > 0 }">
-                ${{ (driver.balance || 0).toFixed(2) }}
-              </span>
+              <div class="saldo-cell">
+                <span class="balance-tag" :class="{ 'has-balance': driver.saldo_garantia > 0 }">
+                  ${{ (driver.saldo_garantia || 0).toFixed(2) }}
+                </span>
+                <span v-if="driver.viajes_disponibles !== null" class="trips-sub" :class="{ 'has-trips': driver.viajes_disponibles > 0 }">
+                  {{ driver.viajes_disponibles }} viajes
+                </span>
+                <span v-else class="trips-sub">— viajes</span>
+              </div>
             </td>
             <td>
               <div class="actions-group">
-                <button class="action-btn history" @click="openHistoryModal(driver)" title="Ver Historial">📋</button>
-                <button class="action-btn wallet" @click="openLiquidationModal(driver)" title="Liquidar Saldo" v-if="driver.balance > 0">💸</button>
-                <button class="action-btn edit" @click="openModal(driver)" title="Editar">✏️</button>
-                <button class="action-btn delete" @click="deleteDriver(driver.id)" title="Eliminar">🗑️</button>
+                <button class="action-btn history"  @click="openHistoryModal(driver)"    title="Ver Historial">📋</button>
+                <button class="action-btn recharge" @click="openRechargeModal(driver)"   title="Cargar Saldo">💳</button>
+
+                <button class="action-btn edit"     @click="openModal(driver)"           title="Editar">✏️</button>
+                <button class="action-btn delete"   @click="deleteDriver(driver.id)"     title="Eliminar">🗑️</button>
               </div>
             </td>
           </tr>
@@ -285,30 +325,74 @@ onMounted(fetchDrivers)
         </form>
       </div>
     </div>
-    <!-- Modal de Liquidación -->
-    <div v-if="showLiquidationModal" class="modal-overlay">
+    <!-- Modal de Recarga de Saldo -->
+    <div v-if="showRechargeModal" class="modal-overlay">
       <div class="modal-content">
         <div class="modal-header">
-          <h2>Registrar Liquidación</h2>
-          <button @click="showLiquidationModal = false" class="close-btn">&times;</button>
+          <h2>Cargar Saldo</h2>
+          <button @click="showRechargeModal = false" class="close-btn">&times;</button>
         </div>
-        <form @submit.prevent="submitLiquidation" class="modal-body">
-          <p class="modal-intro">Registra el pago realizado al conductor <strong>{{ selectedDriverForWallet?.name }}</strong>.</p>
-          
-          <div class="form-group">
-            <label>Monto a Liquidar ($)</label>
-            <input v-model="liquidationForm.amount" type="number" step="0.01" required>
-            <small>Saldo actual: ${{ selectedDriverForWallet?.balance.toFixed(2) }}</small>
-          </div>
-          
-          <div class="form-group">
-            <label>Descripción / Referencia</label>
-            <textarea v-model="liquidationForm.description" placeholder="Ej. Pago semana 14, transferencia bancaria..."></textarea>
+        <form @submit.prevent="submitRecharge" class="modal-body">
+
+          <p class="modal-intro">
+            Conductor: <strong>{{ rechargingDriver?.name }}</strong>
+            &nbsp;·&nbsp; Saldo actual:
+            <strong>${{ (rechargingDriver?.balance || 0).toFixed(2) }}</strong>
+          </p>
+
+          <!-- Esquema activo + saldo admin -->
+          <div class="scheme-row">
+            <div v-if="billingConfig" class="scheme-badge">
+              <span v-if="billingConfig.tipo_esquema === 'credito'">
+                🪙 Crédito · ${{ billingConfig.precio_credito }} / viaje
+              </span>
+              <span v-else>
+                📊 Comisión · {{ billingConfig.porcentaje_comision }}% por viaje
+              </span>
+            </div>
+            <div v-else class="scheme-badge warning">
+              ⚠️ Sin esquema configurado
+            </div>
+            <div v-if="adminBalance !== null" class="admin-balance-badge">
+              Tu saldo: <strong>${{ Number(adminBalance).toFixed(2) }}</strong>
+            </div>
           </div>
 
+          <!-- Monto -->
+          <div class="form-group">
+            <label>Monto a cargar ($)</label>
+            <input
+              v-model="rechargeForm.amount"
+              type="number"
+              min="0.01"
+              step="0.01"
+              placeholder="Ej. 150.00"
+              required
+            />
+          </div>
+
+          <!-- Preview de créditos (solo esquema crédito) -->
+          <div v-if="creditosPreview !== null" class="credits-preview">
+            <span class="preview-label">Viajes disponibles</span>
+            <span class="preview-value">{{ creditosPreview }}</span>
+            <span class="preview-detail">
+              ${{ rechargeForm.amount }} ÷ ${{ billingConfig.precio_credito }} = {{ creditosPreview }} viajes
+            </span>
+          </div>
+
+          <!-- Descripción -->
+          <div class="form-group">
+            <label>Descripción</label>
+            <input v-model="rechargeForm.description" type="text" placeholder="Recarga de saldo" />
+          </div>
+
+          <p v-if="rechargeError" class="form-error">{{ rechargeError }}</p>
+
           <div class="modal-footer">
-            <button type="button" @click="showLiquidationModal = false" class="btn-secondary">Cancelar</button>
-            <button type="submit" class="btn-primary">Registrar Pago</button>
+            <button type="button" @click="showRechargeModal = false" class="btn-secondary">Cancelar</button>
+            <button type="submit" class="btn-primary" :disabled="rechargeSaving">
+              {{ rechargeSaving ? 'Cargando…' : 'Confirmar Recarga' }}
+            </button>
           </div>
         </form>
       </div>
@@ -480,6 +564,23 @@ onMounted(fetchDrivers)
   background: #DCFCE7;
   padding: 0.25rem 0.5rem;
   border-radius: 6px;
+}
+
+.saldo-cell {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-end;
+  gap: 0.2rem;
+}
+
+.trips-sub {
+  font-size: 0.75rem;
+  color: var(--text-muted);
+}
+
+.trips-sub.has-trips {
+  color: #1D4ED8;
+  font-weight: 600;
 }
 
 /* Actions */
@@ -678,6 +779,93 @@ onMounted(fetchDrivers)
   display: flex;
   justify-content: center;
   padding: 4rem;
+}
+
+/* Recharge modal extras */
+.scheme-row {
+  display: flex;
+  align-items: center;
+  gap: 0.75rem;
+  flex-wrap: wrap;
+  margin-bottom: 1.25rem;
+}
+
+.scheme-row .scheme-badge {
+  margin-bottom: 0;
+}
+
+.admin-balance-badge {
+  font-size: 0.82rem;
+  color: #374151;
+  background: #F3F4F6;
+  border: 1px solid #E5E7EB;
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+}
+
+.admin-balance-badge strong {
+  color: #111827;
+}
+
+.scheme-badge {
+  display: inline-block;
+  background: #EEF2FF;
+  color: #3730A3;
+  border: 1px solid #C7D2FE;
+  border-radius: 8px;
+  padding: 0.4rem 0.75rem;
+  font-size: 0.82rem;
+  font-weight: 600;
+  margin-bottom: 1.25rem;
+}
+
+.scheme-badge.warning {
+  background: #FFFBEB;
+  color: #92400E;
+  border-color: #FDE68A;
+}
+
+.credits-preview {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  background: #F0FDF4;
+  border: 1px solid #BBF7D0;
+  border-radius: 10px;
+  padding: 1rem;
+  margin-bottom: 1.25rem;
+  text-align: center;
+}
+
+.preview-label {
+  font-size: 0.78rem;
+  color: #166534;
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.preview-value {
+  font-size: 2.5rem;
+  font-weight: 800;
+  color: #15803D;
+  line-height: 1.1;
+}
+
+.preview-detail {
+  font-size: 0.78rem;
+  color: #4ADE80;
+  margin-top: 0.25rem;
+}
+
+.form-error {
+  color: #DC2626;
+  font-size: 0.85rem;
+  margin-bottom: 0.75rem;
+}
+
+.action-btn.recharge:hover {
+  background-color: #EEF2FF;
+  border-color: #A5B4FC;
 }
 
 .spinner {

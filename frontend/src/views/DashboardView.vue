@@ -402,6 +402,7 @@ onMounted(() => {
 
 onUnmounted(() => {
     if (refreshInterval) clearInterval(refreshInterval)
+    MapService.destroy()
 })
 
 // --- Categorized Trip Lists ---

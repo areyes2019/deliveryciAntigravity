@@ -124,7 +124,7 @@ class PricingService
 
         return [
             'status' => true,
-            'price'  => round($total, 2),
+            'price'  => (int) ceil($total),
             'breakdown' => [
                 'mode'            => 'distance',
                 'base_fare'       => $baseFare,
@@ -187,7 +187,7 @@ class PricingService
 
             return [
                 'status' => true,
-                'price'  => round($shortTripPrice, 2),
+                'price'  => (int) ceil($shortTripPrice),
                 'breakdown' => [
                     'mode'         => 'zone',
                     'type'         => 'short_trip',
@@ -370,7 +370,7 @@ class PricingService
 
         return [
             'status' => true,
-            'price'  => round($price, 2),
+            'price'  => (int) ceil($price),
             'breakdown' => [
                 'mode'          => 'zone',
                 'type'          => $isCrossZone ? 'cross_zone' : 'same_zone',

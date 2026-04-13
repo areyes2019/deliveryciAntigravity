@@ -7,6 +7,7 @@ import OrdersView from '../views/OrdersView.vue'
 import ReportsView from '../views/ReportsView.vue'
 import PricingConfigView from '../views/PricingConfigView.vue'
 import DriverSimulatorView from '../views/DriverSimulatorView.vue'
+import DriverBillingConfigView from '../views/DriverBillingConfigView.vue'
 import DriverAppView from '../views/DriverAppView.vue'
 import WalletView from '../views/WalletView.vue'
 import ProfileView from '../views/ProfileView.vue'
@@ -79,6 +80,12 @@ const router = createRouter({
       path: '/pricing',
       name: 'pricing',
       component: PricingConfigView,
+      meta: { requiresAuth: true, roles: ['client_admin'] }
+    },
+    {
+      path: '/driver-billing',
+      name: 'driver-billing',
+      component: DriverBillingConfigView,
       meta: { requiresAuth: true, roles: ['client_admin'] }
     }
   ]

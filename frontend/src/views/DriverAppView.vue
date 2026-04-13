@@ -20,9 +20,11 @@ const showRouteDetail = ref(false)
 const isDriverOnline = ref(false)
 const isTogglingStatus = ref(false)
 
-// Today's earnings
-const todayEarnings = ref(0)
-const todayTrips = ref(0)
+// Today's earnings + guarantee balance + viajes disponibles
+const todayEarnings     = ref(0)
+const todayTrips        = ref(0)
+const guaranteeBalance  = ref(null)   // null = todavía no cargado
+const viajesDisponibles = ref(null)   // null = esquema porcentaje o no cargado
 let earningsInterval = null
 
 // Coin animation refs
@@ -34,14 +36,12 @@ const fetchTodayEarnings = async () => {
     const driverId = authStore.user?.driver?.id
     if (!driverId) return
     try {
-        const res = await api.get(`/wallet/movements/${driverId}`)
+        const res = await api.get(`/wallet/today/${driverId}`)
         if (res.data.status) {
-            const today = new Date().toISOString().split('T')[0]
-            const todayIncome = (res.data.data.movements || []).filter(m =>
-                m.type === 'ingreso' && m.created_at?.startsWith(today)
-            )
-            todayEarnings.value = todayIncome.reduce((sum, m) => sum + parseFloat(m.amount || 0), 0)
-            todayTrips.value = todayIncome.length
+            todayEarnings.value     = parseFloat(res.data.data.earnings)          || 0
+            todayTrips.value        = parseInt(res.data.data.trips)              || 0
+            guaranteeBalance.value  = parseFloat(res.data.data.guarantee_balance) || 0
+            viajesDisponibles.value = res.data.data.viajes_disponibles ?? null
         }
     } catch (e) {
         console.warn('No se pudieron cargar las ganancias del día:', e)
@@ -127,6 +127,12 @@ watch(progress, (val) => {
 // --- Computed ---
 const canStart = computed(() => activeOrder.value && routePoints.value.length > 0 && !isSimulating.value)
 const canPause = computed(() => isSimulating.value)
+
+// null = balance todavía no cargado (no bloquear en ese estado)
+const canAcceptTrips = computed(() =>
+    guaranteeBalance.value === null || guaranteeBalance.value > 0
+)
+
 
 const avatarUrl = computed(() => {
     const name = (authStore.userName || 'Driver').replace(' ', '+')
@@ -465,14 +471,26 @@ const toggleSimulatorMode = () => {
     <div class="absolute top-[72px] left-4 z-20 pointer-events-none">
       <div
         ref="walletChipRef"
-        class="flex items-center gap-2 px-3 py-1.5 rounded-2xl"
+        class="flex items-center gap-3 rounded-md bg-slate-800 py-1 px-3 border border-transparent text-sm text-white transition-all shadow-sm"
         :class="{ 'wallet-bounce': walletBounce }"
-        style="background: rgba(0,0,0,0.52); backdrop-filter: blur(20px); -webkit-backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.12); box-shadow: 0 4px 16px rgba(0,0,0,0.3);"
       >
         <span class="text-base leading-none">💰</span>
         <span class="text-white font-extrabold text-sm tracking-tight">${{ todayEarnings.toFixed(2) }}</span>
         <span class="w-px h-3 bg-white/20 flex-shrink-0"></span>
         <span class="text-white/50 text-xs">{{ todayTrips }} {{ todayTrips === 1 ? 'viaje' : 'viajes' }} hoy</span>
+      </div>
+    </div>
+
+    <!-- ── FLOATING TRIPS CHIP ───────────────────────────────── -->
+    <div v-if="viajesDisponibles !== null" class="absolute top-[72px] right-4 z-20 pointer-events-none">
+      <div
+        class="flex items-center gap-3 rounded-md py-1 px-3 border border-transparent text-sm text-white transition-all shadow-sm"
+        :class="guaranteeBalance > 0 ? 'bg-blue-700' : 'bg-red-700'"
+      >
+        <span class="text-base leading-none">🎫</span>
+        <span class="text-white font-extrabold text-sm tracking-tight">{{ viajesDisponibles }}</span>
+        <span class="w-px h-3 bg-white/20 flex-shrink-0"></span>
+        <span class="text-white/50 text-xs">viajes</span>
       </div>
     </div>
 
@@ -588,9 +606,21 @@ const toggleSimulatorMode = () => {
 
             <!-- CTA block — pinned to bottom -->
             <div class="sheet-cta">
+              <div
+                v-if="!canAcceptTrips"
+                class="flex items-center gap-3 bg-red-50 border border-red-200 rounded-2xl px-4 py-3 mb-3"
+              >
+                <span class="text-xl flex-shrink-0">🔒</span>
+                <div>
+                  <p class="text-red-700 font-bold text-[13px] leading-tight">Sin saldo de garantía</p>
+                  <p class="text-red-400 text-[12px] mt-0.5">Recarga tu saldo para poder seguir recibiendo viajes nuevos.</p>
+                </div>
+              </div>
               <button
                 @click="acceptOrder(availableOrders[0])"
-                class="sheet-btn sheet-btn--blue"
+                class="sheet-btn"
+                :class="canAcceptTrips ? 'sheet-btn--blue' : 'sheet-btn--disabled'"
+                :disabled="!canAcceptTrips"
               >
                 Aceptar Viaje
               </button>
@@ -839,6 +869,12 @@ const toggleSimulatorMode = () => {
   box-shadow: 0 12px 40px rgba(37, 99, 235, 0.55);
 }
 .sheet-btn--blue:active { background: #1d4ed8; }
+
+.sheet-btn--disabled {
+  background: #E5E7EB;
+  color: #9CA3AF;
+  cursor: not-allowed;
+}
 
 .sheet-btn--indigo {
   background: #4f46e5;

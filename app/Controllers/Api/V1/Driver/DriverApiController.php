@@ -3,6 +3,7 @@
 namespace App\Controllers\Api\V1\Driver;
 
 use App\Controllers\BaseController;
+use App\Models\DriverBillingConfigModel;
 use App\Models\DriverModel;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
@@ -65,6 +66,23 @@ class DriverApiController extends BaseController
 
         if ($order['client_id'] != $driver['client_id']) {
             return $this->respondError('Unauthorized: This trip belongs to another client.');
+        }
+
+        // ── Validar saldo de garantía (esquema crédito) ───────────────────────
+        $billingModel = new DriverBillingConfigModel();
+        $billing      = $billingModel->getByClient($driver['client_id']);
+
+        if ($billing && $billing['tipo_esquema'] === 'credito') {
+            $walletService    = new WalletService();
+            $guaranteeBalance = $walletService->getGuaranteeBalance($driver['id']);
+            $precioPorViaje   = (float)($billing['precio_credito'] ?? 0);
+
+            if ($guaranteeBalance < $precioPorViaje) {
+                return $this->respondError(
+                    "Sin saldo suficiente. Necesitas \${$precioPorViaje} de garantía para aceptar este viaje. " .
+                    "Tu saldo actual es \${$guaranteeBalance}."
+                );
+            }
         }
 
         $db = \Config\Database::connect();
@@ -153,12 +171,23 @@ class DriverApiController extends BaseController
                 'new_status'      => $newStatus
             ]);
 
-            if ($newStatus === 'entregado' && (float)($order['total_to_collect'] ?? 0) > 0) {
+            if ($newStatus === 'entregado') {
                 $walletService = new WalletService();
-                $walletService->addIncomeFromTrip(
+
+                // Registrar ingreso por cobro en efectivo (earnings)
+                if ((float)($order['total_to_collect'] ?? 0) > 0) {
+                    $walletService->addIncomeFromTrip(
+                        $driver['id'],
+                        (int)$id,
+                        (float)$order['total_to_collect']
+                    );
+                }
+
+                // Descontar crédito de garantía si el esquema es "credito"
+                $walletService->deductGuaranteeForTrip(
                     $driver['id'],
                     (int)$id,
-                    (float)$order['total_to_collect']
+                    $driver['client_id']
                 );
             }
 

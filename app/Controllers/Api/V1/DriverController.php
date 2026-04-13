@@ -5,6 +5,7 @@ namespace App\Controllers\Api\V1;
 use App\Controllers\BaseController;
 use App\Models\UserModel;
 use App\Models\ClientModel;
+use App\Models\DriverBillingConfigModel;
 use App\Models\DriverModel;
 use App\Models\WalletMovementModel;
 use App\Traits\ApiResponseTrait;
@@ -21,32 +22,75 @@ class DriverController extends BaseController
             return $this->respondUnauthorized('Access denied.');
         }
 
-        $driverModel = new DriverModel();
-        
-        // Define subquery for balance
-        $balanceSubquery = '(SELECT COALESCE(SUM(amount), 0) FROM wallet_movements WHERE driver_id = drivers.id) as balance';
-        
+        $driverModel  = new DriverModel();
+        $billingModel = new DriverBillingConfigModel();
+
+        // Subquery: only guarantee wallet
+        $guaranteeSubquery = "(SELECT COALESCE(SUM(amount), 0) FROM wallet_movements
+                               WHERE driver_id = drivers.id
+                               AND wallet_type = 'guarantee') as saldo_garantia";
+
         if ($userData['role'] === 'client_admin') {
             $clientModel = new ClientModel();
-            $client = $clientModel->where('user_id', $userData['id'])->first();
-            
-            $drivers = $driverModel->select("drivers.*, users.name, users.email, $balanceSubquery")
+            $client      = $clientModel->where('user_id', $userData['id'])->first();
+            $billing     = $billingModel->getByClient($client['id']);
+
+            $drivers = $driverModel->select("drivers.*, users.name, users.email, $guaranteeSubquery")
                                    ->join('users', 'users.id = drivers.user_id')
                                    ->where('drivers.client_id', $client['id'])
                                    ->findAll();
+
+            $drivers = $this->enrichDrivers($drivers, $billing);
+
         } else {
-            $drivers = $driverModel->select("drivers.*, users.name, users.email, clients.business_name, $balanceSubquery")
+            // Superadmin: fetch all billing configs indexed by client_id
+            $allBillings = [];
+            foreach ($billingModel->findAll() as $b) {
+                $allBillings[$b['client_id']] = $b;
+            }
+
+            $drivers = $driverModel->select("drivers.*, users.name, users.email, clients.business_name, $guaranteeSubquery")
                                    ->join('users', 'users.id = drivers.user_id')
                                    ->join('clients', 'clients.id = drivers.client_id')
                                    ->findAll();
-        }
 
-        // Ensure balance is numeric and default to 0
-        foreach ($drivers as &$driver) {
-            $driver['balance'] = (float)($driver['balance'] ?? 0);
+            $drivers = $this->enrichDrivers($drivers, null, $allBillings);
         }
 
         return $this->respondSuccess('Drivers retrieved successfully.', $drivers);
+    }
+
+    /**
+     * Adds saldo_garantia, viajes_disponibles and tipo_esquema to each driver row.
+     *
+     * @param array      $drivers     Raw driver rows from DB
+     * @param array|null $billing     Billing config for a single client (client_admin)
+     * @param array      $allBillings Billing configs indexed by client_id (superadmin)
+     */
+    private function enrichDrivers(array $drivers, ?array $billing, array $allBillings = []): array
+    {
+        foreach ($drivers as &$driver) {
+            $b = $billing ?? ($allBillings[$driver['client_id']] ?? null);
+
+            $saldo          = (float)($driver['saldo_garantia'] ?? 0);
+            $tipoEsquema    = $b['tipo_esquema'] ?? null;
+            $viajesDisp     = null;
+
+            if ($tipoEsquema === 'credito') {
+                $precio     = (float)($b['precio_credito'] ?? 0);
+                $viajesDisp = $precio > 0 ? (int)floor($saldo / $precio) : 0;
+            }
+            // porcentaje scheme: viajes_disponibles no aplica → null (UI mostrará "—")
+
+            $driver['saldo_garantia']     = $saldo;
+            $driver['tipo_esquema']       = $tipoEsquema;
+            $driver['viajes_disponibles'] = $viajesDisp;
+
+            // Keep legacy field so other parts of the system don't break
+            $driver['balance'] = $saldo;
+        }
+
+        return $drivers;
     }
 
     public function create()

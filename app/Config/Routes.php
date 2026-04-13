@@ -37,13 +37,19 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->put('drivers/(:num)', 'DriverController::update/$1', ['filter' => 'jwt:client_admin']);
     $routes->delete('drivers/(:num)', 'DriverController::delete/$1', ['filter' => 'jwt:client_admin']);
 
+    // Driver Billing Config
+    $routes->get('driver-billing', 'DriverBillingConfigController::getConfig', ['filter' => 'jwt:client_admin']);
+    $routes->put('driver-billing', 'DriverBillingConfigController::saveConfig', ['filter' => 'jwt:client_admin']);
+
     // Wallet
     $routes->group('wallet', ['filter' => 'jwt:superadmin'], function($routes) {
         $routes->post('withdraw', 'WalletController::withdraw');
         $routes->post('add-income', 'WalletController::addIncome');
     });
+    $routes->post('wallet/recharge', 'WalletController::recharge', ['filter' => 'jwt:client_admin']);
     $routes->get('wallet/balance/(:num)', 'WalletController::getBalance/$1', ['filter' => 'jwt:superadmin,driver']);
     $routes->get('wallet/movements/(:num)', 'WalletController::getMovements/$1', ['filter' => 'jwt:superadmin,driver']);
+    $routes->get('wallet/today/(:num)', 'WalletController::getTodayStats/$1', ['filter' => 'jwt:superadmin,driver']);
 
     $routes->group('driver', ['filter' => 'jwt:driver'], function($routes) {
         $routes->get('trips/available', 'Driver\DriverApiController::availableTrips');

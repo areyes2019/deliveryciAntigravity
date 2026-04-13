@@ -2,6 +2,7 @@
 
 namespace App\Services;
 
+use App\Models\DriverBillingConfigModel;
 use App\Models\DriverModel;
 use App\Models\WalletMovementModel;
 
@@ -22,7 +23,8 @@ class WalletService
         float $amount,
         ?int $referenceId = null,
         string $referenceType = 'manual',
-        ?string $description = null
+        ?string $description = null,
+        string $walletType = WalletMovementModel::WALLET_EARNINGS
     ): int {
         if ($amount === 0.0) {
             throw new \InvalidArgumentException('The amount cannot be zero.');
@@ -52,6 +54,7 @@ class WalletService
         $insertId = $this->walletModel->insert([
             'driver_id'      => $driverId,
             'type'           => $normalizedType,
+            'wallet_type'    => $walletType,
             'amount'         => $normalizedAmount,
             'reference_id'   => $referenceId,
             'reference_type' => $normalizedReferenceType,
@@ -79,7 +82,62 @@ class WalletService
             $amount,
             $tripId,
             'viaje',
-            "Ingreso por viaje finalizado #{$tripId}"
+            "Ingreso por viaje finalizado #{$tripId}",
+            WalletMovementModel::WALLET_EARNINGS
+        );
+    }
+
+    /**
+     * Admin loads guarantee credits onto a driver's prepaid balance.
+     */
+    public function addGuaranteeRecharge(int $driverId, float $amount, ?string $description = 'Recarga de saldo'): int
+    {
+        $amount = round(abs($amount), 2);
+
+        if ($amount <= 0) {
+            throw new \InvalidArgumentException('Recharge amount must be greater than zero.');
+        }
+
+        return $this->addMovement(
+            $driverId,
+            WalletMovementModel::TYPE_ADJUSTMENT,
+            $amount,
+            null,
+            'recarga',
+            $description,
+            WalletMovementModel::WALLET_GUARANTEE
+        );
+    }
+
+    /**
+     * Deduct one trip cost from the guarantee balance.
+     * Only acts when the client's billing scheme is "credito".
+     * Uses precio_credito from driver_billing_config as the deduction amount.
+     * Returns 0 (no-op) when scheme is not "credito" or config is missing.
+     */
+    public function deductGuaranteeForTrip(int $driverId, int $tripId, int $clientId): int
+    {
+        $billingModel = new DriverBillingConfigModel();
+        $billing      = $billingModel->getByClient($clientId);
+
+        if (!$billing || $billing['tipo_esquema'] !== 'credito') {
+            return 0; // esquema porcentaje u otro: no descontar garantía
+        }
+
+        $precio = round((float)($billing['precio_credito'] ?? 0), 2);
+
+        if ($precio <= 0) {
+            return 0;
+        }
+
+        return $this->addMovement(
+            $driverId,
+            WalletMovementModel::TYPE_COMMISSION,
+            -$precio,
+            $tripId,
+            'viaje',
+            "Consumo de crédito por viaje #{$tripId}",
+            WalletMovementModel::WALLET_GUARANTEE
         );
     }
 
@@ -106,9 +164,24 @@ class WalletService
         return $this->walletModel->getBalance($driverId);
     }
 
+    public function getEarningsBalance(int $driverId): float
+    {
+        return $this->walletModel->getEarningsBalance($driverId);
+    }
+
+    public function getGuaranteeBalance(int $driverId): float
+    {
+        return $this->walletModel->getGuaranteeBalance($driverId);
+    }
+
     public function getMovements(int $driverId, int $limit = 50): array
     {
         return $this->walletModel->getMovementsByDriver($driverId, $limit);
+    }
+
+    public function getTodayStats(int $driverId): array
+    {
+        return $this->walletModel->getTodayStats($driverId);
     }
 
     private function assertAmountMatchesType(string $type, float $amount): void
