@@ -7,6 +7,7 @@ use App\Models\DriverBillingConfigModel;
 use App\Models\DriverModel;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
+use App\Services\NotificationService;
 use App\Services\WalletService;
 use App\Traits\ApiResponseTrait;
 
@@ -108,6 +109,16 @@ class DriverApiController extends BaseController
             return $this->respondError('Failed to accept trip.');
         }
 
+        // Notificar al receptor que ya hay conductor asignado
+        if (!empty($order['receiver_phone'])) {
+            $notification = new NotificationService();
+            $notification->sendNotification(
+                (int) $order['client_id'],
+                $order['receiver_phone'],
+                "Hola {$order['receiver_name']}, tu conductor {$driver['name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
+            );
+        }
+
         return $this->respondSuccess('Trip accepted successfully.', $this->orderModel->find($id));
     }
 
@@ -199,6 +210,23 @@ class DriverApiController extends BaseController
         } catch (\Throwable $e) {
             $db->transRollback();
             return $this->respondError($e->getMessage());
+        }
+
+        // Notificaciones por cambio de estado (fuera de la transacción para no afectar el flujo)
+        if (!empty($order['receiver_phone'])) {
+            $smsMessages = [
+                'en_camino' => "Tu pedido está en camino 🚗 El conductor {$driver['name']} se dirige al destino.",
+                'entregado' => "Tu pedido ha sido entregado. ¡Gracias por usar el servicio! 🙌",
+            ];
+
+            if (isset($smsMessages[$newStatus])) {
+                $notification = new NotificationService();
+                $notification->sendNotification(
+                    (int) $driver['client_id'],
+                    $order['receiver_phone'],
+                    $smsMessages[$newStatus]
+                );
+            }
         }
 
         return $this->respondSuccess('Trip status updated to ' . $newStatus);

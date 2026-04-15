@@ -12,6 +12,15 @@ class ClientController extends BaseController
 {
     use ApiResponseTrait;
     
+    /**
+     * Devuelve la lista completa de clientes registrados en el sistema.
+     *
+     * Solo accesible para usuarios con rol `superadmin`. Realiza un JOIN con
+     * la tabla `users` para incluir el nombre y correo del administrador
+     * asociado a cada cliente.
+     *
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function index()
     {
         $userData = $this->request->jwtPayload ?? null;
@@ -20,7 +29,7 @@ class ClientController extends BaseController
         }
 
         $clientModel = new ClientModel();
-        // Join with users table to get the name and email of the admin for each client
+        // Join con la tabla users para obtener nombre y correo del admin de cada cliente
         $clients = $clientModel->select('clients.*, users.name as admin_name, users.email as admin_email')
                                ->join('users', 'users.id = clients.user_id')
                                ->findAll();
@@ -28,6 +37,16 @@ class ClientController extends BaseController
         return $this->respondSuccess('Clients retrieved successfully.', $clients);
     }
 
+    /**
+     * Devuelve los datos de un cliente específico por su ID.
+     *
+     * Solo accesible para `superadmin`. Incluye el nombre y correo del usuario
+     * administrador vinculado al cliente mediante un JOIN con `users`.
+     * Retorna 404 si el cliente no existe.
+     *
+     * @param int|null $id ID del cliente a consultar.
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function show($id = null)
     {
         $userData = $this->request->jwtPayload ?? null;
@@ -47,6 +66,18 @@ class ClientController extends BaseController
         return $this->respondSuccess('Client retrieved successfully.', $client);
     }
 
+    /**
+     * Crea un nuevo cliente junto con su usuario administrador asociado.
+     *
+     * Solo accesible para `superadmin`. El proceso se ejecuta dentro de una
+     * transacción de base de datos: primero crea el registro en `users` con
+     * rol `client_admin`, y luego crea el registro en `clients` vinculado a
+     * ese usuario. Si cualquier paso falla, se hace rollback completo.
+     *
+     * Campos requeridos: `name`, `email`, `password`, `business_name`, `cost_per_trip`.
+     *
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function create()
     {
         try {
@@ -114,6 +145,17 @@ class ClientController extends BaseController
         }
     }
 
+    /**
+     * Agrega créditos al saldo de un cliente existente.
+     *
+     * Solo accesible para `superadmin`. Suma el `amount` indicado al
+     * `credits_balance` actual del cliente y registra la operación en la
+     * tabla `credit_transactions` como una recarga (`recharge`).
+     * El monto debe ser un número entero positivo mayor a cero.
+     *
+     * @param int|null $id ID del cliente al que se le asignan los créditos.
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function addCredits($id = null)
     {
         $userData = $this->request->jwtPayload ?? null;
@@ -154,6 +196,20 @@ class ClientController extends BaseController
         return $this->respondSuccess('Credits added successfully.', ['new_balance' => $newBalance]);
     }
 
+    /**
+     * Actualiza los datos de un cliente existente.
+     *
+     * Solo accesible para `superadmin`. Permite modificar `business_name` y
+     * `cost_per_trip` en la tabla `clients`. Si se incluye el campo `name`
+     * en el payload, también actualiza el nombre del usuario asociado en la
+     * tabla `users`. Retorna 404 si el cliente no existe.
+     *
+     * Campos requeridos: `business_name`, `cost_per_trip`.
+     * Campo opcional: `name` (nombre del usuario administrador).
+     *
+     * @param int|null $id ID del cliente a actualizar.
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function update($id = null)
     {
         try {
@@ -202,6 +258,17 @@ class ClientController extends BaseController
         }
     }
 
+    /**
+     * Elimina un cliente y su usuario administrador asociado.
+     *
+     * Solo accesible para `superadmin`. La operación se ejecuta dentro de una
+     * transacción: primero elimina el registro de `clients` y luego el de
+     * `users` vinculado. Si la transacción falla, ninguno de los dos registros
+     * es eliminado. Retorna 404 si el cliente no existe.
+     *
+     * @param int|null $id ID del cliente a eliminar.
+     * @return \CodeIgniter\HTTP\ResponseInterface
+     */
     public function delete($id = null)
     {
         $userData = $this->request->jwtPayload ?? null;

@@ -1,4 +1,9 @@
 #-------------------------
+# Claude Code (local config — never push to remote)
+#-------------------------
+.claude/
+
+#-------------------------
 # Operating Specific Junk Files
 #-------------------------
 
