@@ -7,6 +7,16 @@ use App\Models\CreditTransactionModel;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
 
+/**
+ * Servicio de créditos del cliente.
+ *
+ * Gestiona el saldo de créditos (`credits_balance`) de cada cliente.
+ * Cada operación actualiza el saldo en la tabla `clients` y deja
+ * trazabilidad en la tabla `credit_transactions`.
+ *
+ * Este servicio es llamado exclusivamente por OrderService durante
+ * la creación y cancelación de órdenes.
+ */
 class CreditService
 {
     private BaseConnection $db;
@@ -20,6 +30,17 @@ class CreditService
         $this->transactionModel = new CreditTransactionModel();
     }
 
+    /**
+     * Descuenta créditos del cliente al crear una orden.
+     *
+     * Resta `cost_per_trip` del saldo actual del cliente y registra
+     * la transacción como tipo `deduction` en credit_transactions.
+     *
+     * @param  int    $clientId    ID del cliente al que se le descuentan créditos.
+     * @param  int    $orderId     ID de la orden asociada al descuento.
+     * @param  string $description Motivo del descuento (para auditoría).
+     * @return bool   false si el cliente no existe o no tiene saldo suficiente.
+     */
     public function deductCredit(int $clientId, int $orderId, string $description = 'Credit deducted for new order'): bool
     {
         $client = $this->clientModel->find($clientId);
@@ -44,6 +65,17 @@ class CreditService
         return true;
     }
 
+    /**
+     * Devuelve créditos al cliente al cancelar o rechazar una orden.
+     *
+     * Suma `cost_per_trip` de vuelta al saldo del cliente y registra
+     * la transacción como tipo `refund` en credit_transactions.
+     *
+     * @param  int    $clientId    ID del cliente al que se le devuelven créditos.
+     * @param  int    $orderId     ID de la orden asociada al reembolso.
+     * @param  string $description Motivo del reembolso (para auditoría).
+     * @return bool   false si el cliente no existe.
+     */
     public function refundCredit(int $clientId, int $orderId, string $description = 'Credit refunded for canceled/rejected order'): bool
     {
         $client = $this->clientModel->find($clientId);

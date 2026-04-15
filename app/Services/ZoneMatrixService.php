@@ -28,10 +28,19 @@ class ZoneMatrixService
     }
 
     /**
-     * Rebuild the full NxN matrix for a client.
-     * - Inserts missing entries with the auto price rule.
-     * - Leaves existing rows untouched (preserves overrides).
-     * - Deletes orphaned rows where a zone no longer exists.
+     * Reconstruye la matriz completa NxN de precios para un cliente.
+     *
+     * Para cada combinación posible de zonas (origen × destino):
+     * - Si la fila ya existe → la deja intacta (preserva precios manuales).
+     * - Si la fila no existe → la inserta con el precio automático
+     *   (máximo entre base_price del origen y base_price del destino).
+     *
+     * También limpia filas huérfanas cuyas zonas ya no existen.
+     * Si el cliente no tiene zonas, elimina toda su matriz.
+     *
+     * Se llama automáticamente desde PricingController al crear o borrar zonas.
+     *
+     * @param int $clientId ID del cliente cuya matriz se reconstruye.
      */
     public function rebuildMatrix(int $clientId): void
     {
@@ -86,8 +95,15 @@ class ZoneMatrixService
     }
 
     /**
-     * Resolve the price for a specific origin → destination pair.
-     * Returns the price (float) or null if no entry exists.
+     * Consulta el precio para una combinación específica origen → destino.
+     *
+     * Retorna el precio almacenado (manual o automático) o null si no
+     * existe entrada en la matriz para esa combinación.
+     *
+     * @param  int        $clientId    ID del cliente.
+     * @param  int        $originZoneId ID de la zona de origen.
+     * @param  int        $destZoneId   ID de la zona de destino.
+     * @return float|null Precio configurado, o null si no existe la entrada.
      */
     public function resolvePrice(int $clientId, int $originZoneId, int $destZoneId): ?float
     {

@@ -9,6 +9,18 @@ use App\Helpers\GeoHelper;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
 
+/**
+ * Servicio de órdenes de entrega.
+ *
+ * Orquesta todo el ciclo de vida de una orden: creación y cancelación.
+ * Es el punto central de lógica de negocio que coordina precios, créditos
+ * y auditoría de estados dentro de transacciones atómicas de base de datos.
+ *
+ * Dependencias internas:
+ * - PricingService  : calcula el costo del viaje según el modo de tarifa del cliente.
+ * - CreditService   : descuenta y devuelve créditos del cliente.
+ * - OrderStatusLogModel : registra cada cambio de estado para auditoría.
+ */
 class OrderService
 {
     private BaseConnection $db;
@@ -24,6 +36,28 @@ class OrderService
         $this->creditService = new CreditService();
     }
 
+    /**
+     * Crea una nueva orden de entrega.
+     *
+     * Proceso completo (transacción atómica):
+     *  1. Verifica que el cliente exista y tenga créditos suficientes.
+     *  2. Calcula la distancia: usa `distance_km` del frontend (Google Maps)
+     *     o Haversine como fallback si no se envió.
+     *  3. Llama a PricingService para calcular el costo según el modo de tarifa.
+     *  4. Determina `total_to_collect` según el tipo de pago:
+     *     - prepaid          → el conductor no cobra nada (ya pagó con créditos)
+     *     - cash_on_delivery → el conductor cobra solo el costo del servicio
+     *     - cash_full        → el conductor cobra servicio + valor del producto
+     *  5. Inserta la orden con estado `publicado`.
+     *  6. Descuenta los créditos del cliente via CreditService.
+     *  7. Registra el cambio de estado en order_status_log.
+     *
+     * Si cualquier paso falla, se hace rollback completo.
+     *
+     * @param  int   $clientId ID del cliente que crea la orden.
+     * @param  array $data     Datos del formulario: coordenadas, direcciones, tipo de pago, etc.
+     * @return array { status: bool, message: string, data?: array }
+     */
     public function createOrder(int $clientId, array $data): array
     {
         $clientModel = new ClientModel();
@@ -143,6 +177,23 @@ class OrderService
         return ['status' => true, 'message' => 'Order created successfully', 'data' => $order];
     }
 
+    /**
+     * Cancela una orden existente y devuelve los créditos al cliente.
+     *
+     * Restricciones:
+     * - Solo se pueden cancelar órdenes en estado `publicado`.
+     *   Una vez que un conductor la tomó (`tomado`), ya no es cancelable desde aquí.
+     * - Solo el cliente propietario de la orden puede cancelarla.
+     *
+     * Proceso (transacción atómica):
+     *  1. Cambia el estado de la orden a `cancelado`.
+     *  2. Devuelve los créditos al cliente via CreditService.
+     *  3. Registra el cambio de estado en order_status_log.
+     *
+     * @param  int   $orderId  ID de la orden a cancelar.
+     * @param  int   $clientId ID del cliente que solicita la cancelación.
+     * @return array { status: bool, message: string }
+     */
     public function cancelOrder(int $orderId, int $clientId): array
     {
         $order = $this->orderModel->find($orderId);
