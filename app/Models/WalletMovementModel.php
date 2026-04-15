@@ -4,6 +4,34 @@ namespace App\Models;
 
 use CodeIgniter\Model;
 
+/**
+ * Modelo de movimientos de billetera del conductor.
+ *
+ * Registra cada transacción económica asociada a un conductor. La billetera
+ * está dividida en dos bolsillos independientes controlados por `wallet_type`:
+ *
+ * - `guarantee` (garantía): saldo precargado por el administrador del cliente.
+ *   En el esquema 'credito', cada viaje descuenta un monto fijo de aquí.
+ * - `earnings` (ganancias): dinero ganado por el conductor al completar viajes.
+ *   En el esquema 'porcentaje', el sistema deposita aquí la parte del conductor.
+ *
+ * Tipos de movimiento (`type`):
+ * - `ingreso`   : entrada de dinero (pago por viaje completado).
+ * - `retiro`    : salida de dinero (el conductor retira sus ganancias).
+ * - `ajuste`    : corrección manual realizada por el administrador.
+ * - `comision`  : descuento de comisión del sistema sobre una ganancia.
+ *
+ * Trazabilidad: cada movimiento puede referenciar el origen mediante
+ * `reference_type` (ej. 'viaje') y `reference_id` (ID de la orden).
+ *
+ * Métodos propios:
+ * - `getBalance()`          : saldo total sumando todos los movimientos del conductor.
+ * - `getEarningsBalance()`  : saldo solo de la billetera de ganancias.
+ * - `getGuaranteeBalance()` : saldo solo de la billetera de garantía.
+ * - `getMovementsByDriver()`: historial de movimientos paginado (máx. 200).
+ * - `getTodayStats()`       : ganancias y viajes completados en el día de hoy.
+ * - `findTripIncome()`      : busca si ya existe un ingreso registrado para un viaje específico.
+ */
 class WalletMovementModel extends Model
 {
     public const TYPE_INCOME = 'ingreso';

@@ -4,6 +4,28 @@ namespace App\Models;
 
 use CodeIgniter\Model;
 
+/**
+ * Modelo de la matriz de precios entre zonas.
+ *
+ * Almacena el precio específico para cada combinación de zona origen → zona destino
+ * dentro de un mismo cliente. Permite tarifas asimétricas: el viaje de A→B puede
+ * costar diferente que B→A.
+ *
+ * Cada fila representa: "para el cliente X, un viaje desde la zona Y hacia la zona Z
+ * cuesta $precio".
+ *
+ * Esta tabla es consultada por el PricingService cuando el cliente usa
+ * `pricing_mode = 'zones'` y tiene configurada una matriz explícita.
+ * Si no existe entrada para una combinación, el sistema usa el precio base
+ * de la zona origen como fallback.
+ *
+ * La combinación (client_id, origin_zone_id, destination_zone_id) es única
+ * en la base de datos (índice UNIQUE `zone_pair`).
+ *
+ * Métodos propios:
+ * - `lookupEntry()`: busca el precio para una combinación específica
+ *                    cliente + zona origen + zona destino.
+ */
 class ZoneMatrixModel extends Model
 {
     protected $table            = 'zone_pricing_matrix';

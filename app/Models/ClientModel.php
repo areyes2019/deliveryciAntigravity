@@ -4,6 +4,26 @@ namespace App\Models;
 
 use CodeIgniter\Model;
 
+/**
+ * Modelo de clientes (empresas) del sistema.
+ *
+ * Cada cliente representa una empresa que contrata el servicio de delivery.
+ * Está vinculado a un usuario con rol `client_admin` a través de `user_id`.
+ *
+ * Campos de configuración de tarifas:
+ * - `pricing_mode`    : modo de cobro ('distance' por km o 'zones' por zonas geográficas).
+ * - `cost_per_trip`   : tarifa fija por viaje (modo distance).
+ * - `base_fare`       : tarifa base (modo distance).
+ * - `price_per_km`    : precio por kilómetro recorrido (modo distance).
+ * - `min_distance_km` : distancia mínima cobrable; viajes más cortos pagan como si fueran este valor.
+ *
+ * Campos financieros:
+ * - `credits_balance` : saldo de créditos disponibles para pagar viajes.
+ * - `sms_enabled`     : indica si el cliente tiene activas las notificaciones SMS al destinatario.
+ *
+ * Comportamientos automáticos:
+ * - Genera un UUID único antes de cada INSERT.
+ */
 class ClientModel extends Model
 {
     protected $table            = 'clients';
