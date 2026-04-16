@@ -103,3 +103,4 @@ Only after this summary, ask the user what they want to improve or fix.
 - When touching GPS/real-time code, always consider race conditions and connection drops
 - Prefer CI4 conventions (Services, Entities, BaseModel) over raw queries
 - Prefer Vue 3 Composition API + `
+- Respuestas siempre en epañol

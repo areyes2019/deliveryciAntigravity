@@ -141,11 +141,42 @@ const avatarUrl = computed(() => {
 
 // --- Methods ---
 
+const notifyNewOrder = () => {
+    // Vibración en móvil
+    if (navigator.vibrate) navigator.vibrate([300, 100, 300])
+
+    // Sonido de alerta
+    try {
+        const ctx = new (window.AudioContext || window.webkitAudioContext)()
+        const osc = ctx.createOscillator()
+        const gain = ctx.createGain()
+        osc.connect(gain)
+        gain.connect(ctx.destination)
+        osc.frequency.setValueAtTime(880, ctx.currentTime)
+        gain.gain.setValueAtTime(0.3, ctx.currentTime)
+        gain.gain.exponentialRampToValueAtTime(0.001, ctx.currentTime + 0.6)
+        osc.start(ctx.currentTime)
+        osc.stop(ctx.currentTime + 0.6)
+    } catch {}
+
+    // Notificación del navegador si tiene permiso
+    if (Notification.permission === 'granted') {
+        new Notification('¡Nuevo envío disponible!', {
+            body: 'Hay un nuevo pedido esperando conductor.',
+            icon: '/icons/icon-192x192.png',
+        })
+    }
+}
+
 const loadAvailableOrders = async () => {
     isLoading.value = true
     try {
         const res = await api.get('/driver/trips/available')
-        availableOrders.value = res.data.data
+        const incoming = res.data.data ?? []
+        const prevIds = new Set(availableOrders.value.map(o => o.id))
+        const hasNew = incoming.some(o => !prevIds.has(o.id))
+        if (hasNew && availableOrders.value.length > 0) notifyNewOrder()
+        availableOrders.value = incoming
     } catch (e) {
         console.error('Error loading available orders:', e)
     } finally {
@@ -346,6 +377,8 @@ onMounted(async () => {
     } catch (e) {
         console.warn('Could not fetch driver status:', e)
     }
+
+    if (Notification.permission === 'default') Notification.requestPermission()
 
     fetchTodayEarnings()
     earningsInterval = setInterval(fetchTodayEarnings, 30000)

@@ -36,6 +36,10 @@ class DriverApiController extends BaseController
             return $this->respondError('Driver profile not found.', [], 404);
         }
 
+        if (empty($driver['is_active'])) {
+            return $this->respondError('You must be online to view available trips.', [], 403);
+        }
+
         $orders = $this->orderModel->where('status', 'publicado')
                                    ->where('client_id', $driver['client_id'])
                                    ->findAll();
@@ -49,10 +53,18 @@ class DriverApiController extends BaseController
     public function acceptTrip($id)
     {
         $userData = $this->request->jwtPayload;
-        $driver = $this->driverModel->where('user_id', $userData['id'])->first();
+        $driver = $this->driverModel
+            ->select('drivers.*, users.name as driver_name')
+            ->join('users', 'users.id = drivers.user_id')
+            ->where('drivers.user_id', $userData['id'])
+            ->first();
 
         if (!$driver) {
             return $this->respondError('Driver profile not found.', [], 404);
+        }
+
+        if (empty($driver['is_active'])) {
+            return $this->respondError('You must be online to accept trips.', [], 403);
         }
 
         $order = $this->orderModel->find($id);
@@ -115,7 +127,7 @@ class DriverApiController extends BaseController
             $notification->sendNotification(
                 (int) $order['client_id'],
                 $order['receiver_phone'],
-                "Hola {$order['receiver_name']}, tu conductor {$driver['name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
+                "Hola {$order['receiver_name']}, tu conductor {$driver['driver_name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
             );
         }
 
@@ -128,7 +140,11 @@ class DriverApiController extends BaseController
     public function updateStatus($id)
     {
         $userData = $this->request->jwtPayload;
-        $driver = $this->driverModel->where('user_id', $userData['id'])->first();
+        $driver = $this->driverModel
+            ->select('drivers.*, users.name as driver_name')
+            ->join('users', 'users.id = drivers.user_id')
+            ->where('drivers.user_id', $userData['id'])
+            ->first();
 
         if (!$driver) {
             return $this->respondError('Driver profile not found.', [], 404);
@@ -215,7 +231,7 @@ class DriverApiController extends BaseController
         // Notificaciones por cambio de estado (fuera de la transacción para no afectar el flujo)
         if (!empty($order['receiver_phone'])) {
             $smsMessages = [
-                'en_camino' => "Tu pedido está en camino 🚗 El conductor {$driver['name']} se dirige al destino.",
+                'en_camino' => "Tu pedido está en camino 🚗 El conductor {$driver['driver_name']} se dirige al destino.",
                 'entregado' => "Tu pedido ha sido entregado. ¡Gracias por usar el servicio! 🙌",
             ];
 

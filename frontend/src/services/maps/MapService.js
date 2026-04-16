@@ -1,6 +1,13 @@
 /**
- * MapService.js
- * Facade principal de la aplicación.
+ * MapService — Fachada única (Singleton) para el manejo de mapas.
+ *
+ * Es el único punto de acceso al mapa desde los componentes Vue.
+ * Ningún componente debe importar GoogleProvider directamente.
+ *
+ * Patrón de diseño: Facade + Singleton
+ * - Se exporta como instancia única (`export default new MapService()`),
+ *   garantizando que toda la app comparte el mismo objeto de mapa.
+ * - Delega todas las operaciones al proveedor activo (GoogleProvider).
  */
 import GoogleProvider from './GoogleProvider';
 
@@ -10,7 +17,10 @@ class MapService {
   }
 
   /**
-   * Inicializa el mapa con el proveedor configurado (Google Maps)
+   * Inicializa el mapa en el contenedor indicado.
+   * Crea el proveedor si aún no existe (lazy initialization).
+   * @param {string} containerId - ID del div contenedor del mapa.
+   * @param {object} options     - Opciones: center, zoom, etc.
    */
   initialize(containerId, options = {}) {
     if (!this.provider) {
@@ -21,15 +31,18 @@ class MapService {
   }
 
   /**
-   * Alias for initialize (compatibility/simulator)
+   * Alias de initialize() para compatibilidad con el simulador de conductor.
+   * @param {string} containerId - ID del div contenedor del mapa.
+   * @param {object} options     - Opciones: center, zoom, etc.
    */
   initMap(containerId, options = {}) {
     return this.initialize(containerId, options);
   }
 
   /**
-   * Solo carga el SDK sin inicializar ningún mapa.
-   * Útil para componentes que solo necesitan Places API.
+   * Carga el SDK de Google Maps sin inicializar ningún mapa.
+   * Útil para componentes que solo necesitan la Places API
+   * (autocompletado de direcciones) sin mostrar un mapa.
    */
   ensureSDKLoaded() {
     if (!this.provider) {
@@ -66,18 +79,31 @@ class MapService {
     return this.provider.centerOn(position, zoom);
   }
 
+  /**
+   * Ajusta el zoom y centro del mapa para que todos los puntos sean visibles.
+   * Solo disponible en GoogleProvider. En otros proveedores es un no-op.
+   * @param {Array} points - Array de coordenadas [{lat,lng}, ...].
+   */
   fitToPoints(points) {
     if (typeof this.provider.fitToPoints === 'function') {
       return this.provider.fitToPoints(points);
     }
   }
 
+  /**
+   * Destruye el mapa y limpia todos los marcadores y rutas.
+   * Llamar al desmontar el componente Vue que contiene el mapa.
+   */
   destroy() {
     if (this.provider) {
       this.provider.destroy()
     }
   }
 
+  /**
+   * Retorna la instancia nativa del mapa (google.maps.Map o L.Map).
+   * Usar solo cuando se necesita acceso directo a la API nativa.
+   */
   getNativeMap() {
     return this.provider.map;
   }

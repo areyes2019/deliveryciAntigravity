@@ -1,5 +1,4 @@
 ci4-vue3-app/
-├── .claude/
 ├── .github/
 ├── app/
 │   ├── Commands/
@@ -20,6 +19,25 @@ ci4-vue3-app/
 │   └── index.html
 ├── build/
 ├── docs/
+│   ├── api/
+│   │   ├── auth.md
+│   │   ├── delivery.md
+│   │   └── orders.md
+│   ├── database/
+│   │   ├── migrations.md
+│   │   └── schema.md
+│   ├── modules/
+│   │   ├── delivery.md
+│   │   ├── orders.md
+│   │   ├── payments.md
+│   │   ├── tracking.md
+│   │   └── users.md
+│   ├── prompts/
+│   │   ├── create-migration.md
+│   │   ├── create-module.md
+│   │   └── refactor.md
+│   ├── 00-overview.md
+│   └── 01-architecture.md
 ├── frontend/
 │   ├── .vscode/
 │   ├── node_modules/
@@ -44,7 +62,6 @@ ci4-vue3-app/
 │   ├── vite.config.js
 │   └── README.md
 ├── public/
-├── scratch/
 ├── tests/
 ├── vendor/
 ├── writable/

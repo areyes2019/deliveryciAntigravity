@@ -18,13 +18,13 @@ class SmsService
 {
     private string $sid;
     private string $token;
-    private string $from;
+    private string $messagingSid;
 
     public function __construct()
     {
-        $this->sid   = (string) env('TWILIO_SID',   '');
-        $this->token = (string) env('TWILIO_TOKEN', '');
-        $this->from  = (string) env('TWILIO_FROM',  '');
+        $this->sid          = (string) env('TWILIO_SID',           '');
+        $this->token        = (string) env('TWILIO_TOKEN',         '');
+        $this->messagingSid = (string) env('TWILIO_MESSAGING_SID', '');
     }
 
     /**
@@ -36,7 +36,7 @@ class SmsService
      */
     public function send(string $to, string $message): array
     {
-        if (!$this->isConfigured()) {
+        if (! $this->isConfigured()) {
             log_message('warning', '[SmsService] Credenciales Twilio no configuradas. SMS no enviado.');
             return ['success' => false, 'error' => 'SMS service not configured.'];
         }
@@ -51,8 +51,8 @@ class SmsService
         try {
             $client = new Client($this->sid, $this->token);
             $msg    = $client->messages->create($formatted, [
-                'from' => $this->from,
-                'body' => $message,
+                'messagingServiceSid' => $this->messagingSid,
+                'body'                => $message,
             ]);
 
             log_message('info', "[SmsService] SMS enviado a {$formatted}. Twilio SID: {$msg->sid}");
@@ -68,7 +68,7 @@ class SmsService
 
     private function isConfigured(): bool
     {
-        return $this->sid !== '' && $this->token !== '' && $this->from !== '';
+        return $this->sid !== '' && $this->token !== '' && $this->messagingSid !== '';
     }
 
     /**

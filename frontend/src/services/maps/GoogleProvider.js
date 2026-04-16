@@ -1,15 +1,31 @@
 import BaseProvider from './BaseProvider';
 
 /**
- * GoogleProvider
- * Implementación definitiva y robusta para Google Maps.
+ * GoogleProvider — Implementación de mapas con Google Maps API.
+ *
+ * Proveedor principal del sistema. Usa las siguientes APIs de Google:
+ * - Maps JavaScript API  : renderizado del mapa.
+ * - Directions API       : rutas reales por calles entre dos puntos.
+ * - Places API           : autocompletado de direcciones.
+ * - Geometry Library     : cálculos geométricos sobre el mapa.
+ * - Drawing Library      : dibujo de polígonos (zonas de pricing).
+ *
+ * La API key se lee de la variable de entorno `VITE_GOOGLE_MAPS_API_KEY`.
+ *
+ * Características destacadas:
+ * - Carga del SDK bajo demanda (lazy) con protección contra doble carga.
+ * - Intercepción de errores de autenticación sin alert bloqueante.
+ * - `drawRoute()` usa Directions API con fallback a polyline directa.
+ * - `_normalizeIcon()` acepta URLs, emojis y objetos de icono.
+ * - `_parsePosition()` acepta arrays, objetos {lat,lng} y {latitude,longitude}.
+ * - Coordenadas por defecto: Celaya, Guanajuato (20.5222, -100.8122).
  */
 export default class GoogleProvider extends BaseProvider {
   constructor() {
     super();
     this.apiKey = import.meta.env.VITE_GOOGLE_MAPS_API_KEY;
     this.loaderPromise = null;
-    this.defaultCoords = { lat: 20.5222, lng: -100.8122 }; // Celaya center
+    this.defaultCoords = { lat: 20.5222, lng: -100.8122 }; // Celaya, GTO
   }
 
   /**

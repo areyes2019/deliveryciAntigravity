@@ -61,7 +61,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
         $routes->post('go-offline', 'DriverController::goOffline');
     });
 
-    $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
+$routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
 });
 
 $routes->options('(:any)', 'Home::index');
