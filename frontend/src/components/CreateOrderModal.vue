@@ -11,6 +11,7 @@ const routeDistance = ref('')
 const routeTime = ref('')
 const outOfZoneError = ref('')
 const submitting = ref(false)
+const clientZones = ref([])
 
 let mapInstance = null
 let pickupMarker = null
@@ -63,6 +64,24 @@ const loadBalance = async () => {
   }
 }
 
+// ─── Calcula bounding box dinámico desde las zonas del cliente ───────────────
+const computeZoneBounds = () => {
+  if (!clientZones.value.length || !window.google?.maps) return null
+  const bounds = new google.maps.LatLngBounds()
+  let hasPoints = false
+  for (const zone of clientZones.value) {
+    try {
+      const coords = typeof zone.polygon_coordinates === 'string'
+        ? JSON.parse(zone.polygon_coordinates)
+        : zone.polygon_coordinates
+      if (Array.isArray(coords)) {
+        coords.forEach(p => { bounds.extend({ lat: p.lat, lng: p.lng }); hasPoints = true })
+      }
+    } catch {}
+  }
+  return hasPoints ? bounds : null
+}
+
 // ─── Attach Google Places Autocomplete to an input ───────────────────────────
 const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
   if (!window.google?.maps?.places) {
@@ -70,18 +89,20 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
     return
   }
 
-  // Bounding box de la Zona Metropolitana de Celaya, Gto.
-  const celayaBounds = new google.maps.LatLngBounds(
-    new google.maps.LatLng(20.42, -101.05), // SW (Comonfort / Villagrán)
-    new google.maps.LatLng(20.72, -100.60)  // NE (Apaseo el Grande)
+  // Bounds dinámicos si hay zonas; fallback a Celaya
+  const dynamicBounds = computeZoneBounds()
+  const celayaBounds  = new google.maps.LatLngBounds(
+    new google.maps.LatLng(20.42, -101.05),
+    new google.maps.LatLng(20.72, -100.60)
   )
+  const activeBounds = dynamicBounds ?? celayaBounds
 
   const autocomplete = new google.maps.places.Autocomplete(inputEl, {
     componentRestrictions: { country: 'mx' },
     fields: ['formatted_address', 'geometry', 'name', 'place_id', 'types'],
     types: ['geocode', 'establishment'],
-    bounds: celayaBounds,
-    strictBounds: true
+    bounds: activeBounds,
+    strictBounds: !!dynamicBounds
   })
 
   autocomplete.addListener('place_changed', () => {
@@ -182,57 +203,53 @@ watch(
     }
 
     if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
-        // Fetch price preview
-        api.post('/calculate-price', {
-            pickup_lat: pLat, pickup_lng: pLng,
-            drop_lat: dLat, drop_lng: dLng,
-            pickup_address: form.value.pickup_address,
-            drop_address: form.value.drop_address,
-            distance_km: form.value.distance_km
-        }).then(res => {
-            if (res.data.status) {
-                calculatedPrice.value = res.data.data.price;
-                outOfZoneError.value = '';
-                console.log('[pricing] breakdown:', res.data.data.breakdown);
-            }
-        }).catch(err => {
-            calculatedPrice.value = 0;
-            outOfZoneError.value = err.response?.data?.message || 'Error al calcular precio territorial.';
-            if (outOfZoneError.value.includes('cobertura')) {
-                alert(outOfZoneError.value);
-            }
-        });
-    } else {
-        calculatedPrice.value = 0;
-        outOfZoneError.value = '';
-        routeDistance.value = '';
-        routeTime.value = '';
-    }
+        // Limpiar estado anterior
+        calculatedPrice.value = 0
+        routeDistance.value = ''
+        routeTime.value = ''
+        form.value.distance_km = null
 
-    // Directions Service for Actual Route
-    if (!directionsService) {
-        directionsService = new google.maps.DirectionsService();
-        directionsRenderer = new google.maps.DirectionsRenderer({
-            map: mapInstance,
-            suppressMarkers: true,
-            preserveViewport: true,
-            polylineOptions: {
-                strokeColor: '#6366F1',
-                strokeWeight: 4
-            }
-        });
-    } else {
-        // Clear previous route
-        directionsRenderer.setDirections({routes: []});
-    }
+        // Función que valida geofence y calcula precio con la distancia final
+        const validateAndPrice = (distanceKm) => {
+            api.post('/validate-geofence', {
+                pickup_lat: pLat, pickup_lng: pLng,
+                drop_lat: dLat,   drop_lng: dLng,
+            }).then(() => {
+                outOfZoneError.value = ''
+                return api.post('/calculate-price', {
+                    pickup_lat: pLat, pickup_lng: pLng,
+                    drop_lat: dLat, drop_lng: dLng,
+                    pickup_address: form.value.pickup_address,
+                    drop_address: form.value.drop_address,
+                    distance_km: distanceKm
+                })
+            }).then(res => {
+                if (res?.data?.status) {
+                    calculatedPrice.value = res.data.data.price
+                    console.log('[pricing] breakdown:', res.data.data.breakdown)
+                }
+            }).catch(err => {
+                calculatedPrice.value = 0
+                outOfZoneError.value = err.response?.data?.message || 'La zona de destino o recogida está fuera de la zona de operaciones.'
+            })
+        }
 
-    if (!isNaN(pLat) && !isNaN(pLng) && !isNaN(dLat) && !isNaN(dLng)) {
-        const origin = { lat: pLat, lng: pLng };
-        const destination = { lat: dLat, lng: dLng };
+        // Directions Service: obtener distancia real y luego calcular precio
+        if (!directionsService) {
+            directionsService = new google.maps.DirectionsService();
+            directionsRenderer = new google.maps.DirectionsRenderer({
+                map: mapInstance,
+                suppressMarkers: true,
+                preserveViewport: true,
+                polylineOptions: { strokeColor: '#6366F1', strokeWeight: 4 }
+            });
+        } else {
+            directionsRenderer.setDirections({ routes: [] });
+        }
 
         directionsService.route({
-            origin: origin,
-            destination: destination,
+            origin: { lat: pLat, lng: pLng },
+            destination: { lat: dLat, lng: dLng },
             travelMode: google.maps.TravelMode.DRIVING
         }, (response, status) => {
             if (status === 'OK') {
@@ -240,15 +257,22 @@ watch(
                 const leg = response.routes[0].legs[0];
                 routeDistance.value = leg.distance.text;
                 routeTime.value = leg.duration.text;
-                // Capture numeric km for backend pricing (leg.distance.value is metres)
                 form.value.distance_km = leg.distance.value / 1000;
             } else {
-                console.warn('No se pudo calcular la ruta real (' + status + ').');
+                console.warn('Directions falló (' + status + '), usando haversine.');
                 routeDistance.value = '';
                 routeTime.value = '';
                 form.value.distance_km = null;
             }
+            // Calcular precio con la distancia obtenida (real o null → backend usa haversine)
+            validateAndPrice(form.value.distance_km);
         });
+    } else {
+        calculatedPrice.value = 0;
+        outOfZoneError.value = '';
+        routeDistance.value = '';
+        routeTime.value = '';
+        form.value.distance_km = null;
     }
 
     if (!bounds.isEmpty()) {
@@ -267,8 +291,19 @@ watch(
 onMounted(async () => {
   loadBalance()
 
-  // Wait for Google Maps SDK (with Places) to be ready
-  await MapService.ensureSDKLoaded()
+  // Carga geofences y SDK en paralelo para no bloquear la inicialización del mapa
+  const [geofencesResult] = await Promise.allSettled([
+    api.get('/geofences'),
+    MapService.ensureSDKLoaded()
+  ])
+
+  if (geofencesResult.status === 'fulfilled') {
+    clientZones.value = geofencesResult.value.data?.data ?? []
+    console.log('Geofences cargadas:', clientZones.value)
+  } else {
+    clientZones.value = []
+    console.warn('No se pudieron cargar geofences:', geofencesResult.reason)
+  }
 
   // Small tick to ensure inputs are in the DOM
   setTimeout(() => {
@@ -337,6 +372,7 @@ onMounted(async () => {
                   placeholder="Escribe para buscar..."
                   autocomplete="off"
                   required
+                  @input="form.pickup_lat = null; form.pickup_lng = null; form.distance_km = null"
                 />
                 <span v-if="form.pickup_lat" class="coord-badge">✓ Ubicado</span>
               </div>
@@ -351,6 +387,7 @@ onMounted(async () => {
                   placeholder="Escribe para buscar..."
                   autocomplete="off"
                   required
+                  @input="form.drop_lat = null; form.drop_lng = null; form.distance_km = null"
                 />
                 <span v-if="form.drop_lat" class="coord-badge">✓ Ubicado</span>
               </div>

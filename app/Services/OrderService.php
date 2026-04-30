@@ -5,6 +5,7 @@ namespace App\Services;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
 use App\Models\ClientModel;
+use App\Models\GeofenceModel;
 use App\Helpers\GeoHelper;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
@@ -91,6 +92,15 @@ class OrderService
 
         log_message('info', "[OrderService] distanceKm={$distanceKm} source={$distanceSource} pickup=({$data['pickup_lat']},{$data['pickup_lng']}) drop=({$data['drop_lat']},{$data['drop_lng']})");
         
+        $geofenceResult = $this->validateGeofencePoints(
+            $clientId,
+            (float)$data['pickup_lat'], (float)$data['pickup_lng'],
+            (float)$data['drop_lat'],   (float)$data['drop_lng']
+        );
+        if (!$geofenceResult['status']) {
+            return ['status' => false, 'message' => $geofenceResult['message']];
+        }
+
         $pricingService = new PricingService();
         $priceResult = $pricingService->calculatePrice($clientId, (float)$data['pickup_lat'], (float)$data['pickup_lng'], (float)$data['drop_lat'], (float)$data['drop_lng'], $distanceKm);
 
@@ -235,5 +245,45 @@ class OrderService
         }
 
         return ['status' => true, 'message' => 'Order cancelled successfully'];
+    }
+
+    /**
+     * Valida que pickup y drop estén dentro de la geocerca del cliente.
+     * Si el cliente no tiene geocerca configurada, no hay restricción geográfica.
+     */
+    public function validateGeofencePoints(
+        int   $clientId,
+        float $pickupLat, float $pickupLng,
+        float $dropLat,   float $dropLng
+    ): array {
+        $geofenceModel = new GeofenceModel();
+        $geofence      = $geofenceModel->where('client_id', $clientId)->first();
+
+        log_message('debug', "[GeofenceValidation] clientId={$clientId} geofence=" . ($geofence ? 'found' : 'none'));
+
+        // Sin geocerca configurada = sin restricción geográfica
+        if (!$geofence) {
+            log_message('debug', '[GeofenceValidation] Sin geocerca → operación permitida.');
+            return ['status' => true, 'message' => 'OK'];
+        }
+
+        $polygon = json_decode($geofence['polygon_coordinates'], true);
+
+        if (!is_array($polygon) || count($polygon) < 3) {
+            log_message('debug', '[GeofenceValidation] Polígono inválido → operación permitida.');
+            return ['status' => true, 'message' => 'OK'];
+        }
+
+        $pickupInside = GeoHelper::isPointInPolygon(['lat' => $pickupLat, 'lng' => $pickupLng], $polygon);
+        $dropInside   = GeoHelper::isPointInPolygon(['lat' => $dropLat,   'lng' => $dropLng],   $polygon);
+
+        if (!$pickupInside) {
+            return ['status' => false, 'message' => 'La dirección de recogida está fuera del área de operación.'];
+        }
+        if (!$dropInside) {
+            return ['status' => false, 'message' => 'La dirección de entrega está fuera del área de operación.'];
+        }
+
+        return ['status' => true, 'message' => 'OK'];
     }
 }

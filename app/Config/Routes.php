@@ -27,6 +27,10 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     // Pricing Config & Zones
     $routes->put('pricing-config', 'PricingController::updateConfig', ['filter' => 'jwt:client_admin']);
     $routes->post('calculate-price', 'PricingController::calculatePreview', ['filter' => 'jwt:client_admin']);
+    $routes->get('geofences', 'GeofenceController::index', ['filter' => 'jwt:client_admin']);
+    $routes->post('geofences', 'GeofenceController::store', ['filter' => 'jwt:client_admin']);
+    $routes->delete('geofences/(:num)', 'GeofenceController::destroy/$1', ['filter' => 'jwt:client_admin']);
+    $routes->post('validate-geofence', 'GeofenceController::checkPoints', ['filter' => 'jwt:client_admin']);
     $routes->get('zones', 'PricingController::getZones', ['filter' => 'jwt:client_admin']);
     $routes->post('zones', 'PricingController::createZone', ['filter' => 'jwt:client_admin']);
     $routes->delete('zones/(:num)', 'PricingController::deleteZone/$1', ['filter' => 'jwt:client_admin']);

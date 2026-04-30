@@ -82,6 +82,9 @@ const selectedOrder = ref(null)
 const routeInfo = ref(null)
 const viewMode = ref('map') // 'map' or 'stats' for client_admin
 const showCreateOrder = ref(false)
+const clientZones = ref([])
+
+const hasZones = computed(() => clientZones.value.length > 0)
 
 let refreshInterval = null
 
@@ -228,10 +231,14 @@ const fetchDashboardData = async () => {
       stats.value.totalClients = clientsRes.data.data.length
       stats.value.balance = clientsRes.data.data.reduce((acc, c) => acc + parseFloat(c.credits_balance), 0)
     } else if (role.value === 'client_admin') {
-      const driversRes = await api.get('/drivers')
+      const [driversRes, geofencesRes] = await Promise.all([
+          api.get('/drivers'),
+          api.get('/geofences')
+      ])
       drivers.value = driversRes.data.data
       stats.value.totalDrivers = drivers.value.length
       stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
+      clientZones.value = geofencesRes.data?.data ?? []
       console.log('🏎️ Conductores recibidos:', drivers.value.length);
       
       const meRes = await api.get('/auth/me')
@@ -549,9 +556,17 @@ const activeDrivers = computed(() => {
                     <button class="map-pill secondary">
                         <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
                     </button>
-                    <button class="map-pill generate" @click="showCreateOrder = true">
+                    <button
+                        class="map-pill generate"
+                        :class="{ disabled: !hasZones }"
+                        :disabled="!hasZones"
+                        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
+                        @click="hasZones && (showCreateOrder = true)">
                         <span class="icon">🚀</span> Generar Viaje
                     </button>
+                    <div v-if="!hasZones" class="map-pill warning-pill">
+                        ⚠️ Sin zonas configuradas
+                    </div>
                 </div>
 
                 <!-- Side Route Detail Panel -->
@@ -757,7 +772,9 @@ const activeDrivers = computed(() => {
     color: white;
     box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
 }
-.map-pill.generate:hover { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
+.map-pill.generate:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
+.map-pill.generate.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
+.warning-pill { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; font-size: 0.8rem; cursor: default; }
 
 /* Shared Sidebars inside Map Container */
 .data-sidebar {

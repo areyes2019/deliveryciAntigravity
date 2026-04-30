@@ -153,6 +153,13 @@ class PricingService
         $cfg   = config('Pricing');
         $zones = $this->getZones($clientId);
 
+        // No zones configured → fall back to distance pricing (no geographic restriction)
+        if (empty($zones)) {
+            $clientModel = new \App\Models\ClientModel();
+            $client      = $clientModel->find($clientId);
+            return $this->calcDistancePrice($client, $distanceKm);
+        }
+
         $originPoint = ['lat' => $originLat, 'lng' => $originLng];
 
         // Locate the origin zone (required for both rules)
