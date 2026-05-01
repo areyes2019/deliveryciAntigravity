@@ -90,6 +90,7 @@ php_errors.log
 # Composer
 #-------------------------
 vendor/
+vendor.zip
 
 #-------------------------
 # IDE / Development Files

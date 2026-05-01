@@ -69,3 +69,6 @@ $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
 });
 
 $routes->options('(:any)', 'Home::index');
+
+// SPA fallback: sirve el index.html de Vue para todas las rutas frontend
+$routes->get('(:any)', 'Home::vue');
