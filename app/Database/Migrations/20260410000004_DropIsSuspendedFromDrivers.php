@@ -8,10 +8,7 @@ class DropIsSuspendedFromDrivers extends Migration
 {
     public function up()
     {
-        // Drop is_suspended column from drivers table
-        if ($this->db->fieldExists('is_suspended', 'drivers')) {
-            $this->forge->dropColumn('drivers', 'is_suspended');
-        }
+        // Already handled by 20260410000002_AddIsActiveToDrivers — no-op kept for history integrity
     }
 
     public function down()

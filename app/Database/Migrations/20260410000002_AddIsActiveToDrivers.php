@@ -9,8 +9,10 @@ class AddIsActiveToDrivers extends Migration
     public function up()
     {
         // Remove is_suspended from drivers table (will be managed by users.is_suspended)
-        if ($this->db->fieldExists('is_suspended', 'drivers')) {
+        try {
             $this->forge->dropColumn('drivers', 'is_suspended');
+        } catch (\Exception $e) {
+            // Column may already be absent — safe to continue
         }
         
         // Add is_active field to drivers table (for voluntary connection/disconnection)
