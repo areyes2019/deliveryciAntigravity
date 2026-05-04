@@ -305,7 +305,7 @@ export default class GoogleProvider extends BaseProvider {
 
     if (typeof icon !== 'string') return null;
 
-    if (icon.startsWith('http') || icon.startsWith('data:image/')) {
+    if (icon.startsWith('http') || icon.startsWith('/') || icon.startsWith('data:image/')) {
       return icon;
     }
 
