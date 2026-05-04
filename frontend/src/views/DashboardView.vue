@@ -6,30 +6,11 @@ import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 
 const buildDriverMapIcon = (highlight = false) => {
-  const outline = highlight ? '#0F766E' : '#082F49'
-  const shell = highlight ? '#99F6E4' : '#A5DDEB'
-  const body = highlight ? '#115E59' : '#0C4A5E'
-  const accent = highlight ? '#22C55E' : '#FF5A47'
-  const handle = highlight ? '#34D399' : '#F6C445'
-  const svg = `
-    <svg xmlns="http://www.w3.org/2000/svg" width="44" height="44" viewBox="0 0 44 44">
-      <path d="M22 2 C27 2, 31 8, 32 13 L33 18 C34 20, 34 25, 33 28 L33 33 C33 39, 28 42, 22 42 C16 42, 11 39, 11 33 L11 28 C10 25, 10 20, 11 18 L12 13 C13 8, 17 2, 22 2 Z" fill="${shell}"/>
-      <path d="M22 4 C25 4, 29 9, 29 13 L29 19 C29 22, 27 24, 26 25 L18 25 C17 24, 15 22, 15 19 L15 13 C15 9, 19 4, 22 4 Z" fill="${outline}"/>
-      <path d="M18 20 H26 C28 23, 30 28, 30 34 C30 39, 27 41, 22 41 C17 41, 14 39, 14 34 C14 28, 16 23, 18 20 Z" fill="${body}"/>
-      <path d="M16 10 H28 C28 12, 27 13, 25 13 H19 C17 13, 16 12, 16 10 Z" fill="${handle}"/>
-      <path d="M11 13 L4 14.5 C3 14.7, 2.6 15.8, 3.5 16.2 L7 16.6 C7.8 16.7, 8.6 16.4, 9.1 15.9 L13 14 Z" fill="${handle}"/>
-      <path d="M33 13 L40 14.5 C41 14.7, 41.4 15.8, 40.5 16.2 L37 16.6 C36.2 16.7, 35.4 16.4, 34.9 15.9 L31 14 Z" fill="${handle}"/>
-      <path d="M13 14.2 L8 19.3 L6.8 18.5 L10.2 13.8 Z" fill="${accent}"/>
-      <path d="M31 14.2 L36 19.3 L37.2 18.5 L33.8 13.8 Z" fill="${accent}"/>
-      <path d="M16 11.5 C16 8.5, 19 6.6, 22 6.6 C25 6.6, 28 8.5, 28 11.5 C25.8 14, 18.2 14, 16 11.5 Z" fill="${accent}"/>
-      <path d="M20 33.6 H24 C24 36.5, 23.3 39, 22 42 C20.7 39, 20 36.5, 20 33.6 Z" fill="${accent}"/>
-    </svg>
-  `.trim()
-
+  const size = highlight ? { width: 70, height: 47 } : { width: 55, height: 37 }
   return {
-    url: `data:image/svg+xml;charset=UTF-8,${encodeURIComponent(svg)}`,
-    scaledSize: { width: 28, height: 28 },
-    anchor: { x: 14, y: 14 }
+    url: '/public/35859-removebg-preview.png',
+    scaledSize: size,
+    anchor: { x: size.width / 2, y: size.height / 2 }
   }
 }
 
