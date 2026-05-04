@@ -138,7 +138,7 @@ const loadRoute = async () => {
         MapService.updateMarker('sim-dropoff', dropoffCoords, { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png', popup: `<b>Destino:</b><br>${activeOrder.value.drop_address}` });
 
         // Set initial marker
-        MapService.updateMarker('sim-driver', currentPos.value, { icon: '🏍️' })
+        MapService.updateMarker('sim-driver', currentPos.value, { icon: '/public/35859-removebg-preview.png' })
         
         // Global framing: Ensure Driver, Pickup AND Dropoff are strictly inside the camera viewport at all times
         MapService.fitToPoints([currentPos.value, pickupCoords, dropoffCoords])
