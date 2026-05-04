@@ -282,7 +282,7 @@ const loadRoute = async () => {
             }, 100)
         }
         if (currentPos.value) {
-            MapService.updateMarker('app-driver', currentPos.value, { icon: '/public/35859-removebg-preview.png' })
+            MapService.updateMarker('app-driver', currentPos.value, { icon: { url: '/public/35859-removebg-preview.png', scaledSize: { width: 60, height: 40 }, anchor: { x: 30, y: 20 } } })
             MapService.fitToPoints([currentPos.value, pickupCoords, dropoffCoords].filter(p => !isNaN(p.lat)))
         }
 
@@ -299,7 +299,7 @@ const startRealTracking = () => {
         (position) => {
             const newPos = { lat: position.coords.latitude, lng: position.coords.longitude }
             currentPos.value = newPos
-            MapService.updateMarker('app-driver', currentPos.value, { icon: '/public/35859-removebg-preview.png' })
+            MapService.updateMarker('app-driver', currentPos.value, { icon: { url: '/public/35859-removebg-preview.png', scaledSize: { width: 60, height: 40 }, anchor: { x: 30, y: 20 } } })
             const now = Date.now()
             if (now - lastSyncTime > 2000) { syncLocation(); lastSyncTime = now }
 
@@ -328,7 +328,7 @@ const startSimulation = () => {
         if (currentIndex.value >= routePoints.value.length - 1) { stopSimulation(); return }
         currentIndex.value++
         currentPos.value = routePoints.value[currentIndex.value]
-        MapService.updateMarker('app-driver', currentPos.value, { icon: '/public/35859-removebg-preview.png' })
+        MapService.updateMarker('app-driver', currentPos.value, { icon: { url: '/public/35859-removebg-preview.png', scaledSize: { width: 60, height: 40 }, anchor: { x: 30, y: 20 } } })
         const now = Date.now()
         if (now - lastSyncTime > 1500) { syncLocation(); lastSyncTime = now }
         progress.value = Math.round((currentIndex.value / (routePoints.value.length - 1)) * 100)
