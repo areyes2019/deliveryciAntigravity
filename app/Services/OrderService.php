@@ -7,7 +7,6 @@ use App\Models\OrderStatusLogModel;
 use App\Models\ClientModel;
 use App\Models\GeofenceModel;
 use App\Helpers\GeoHelper;
-use App\Services\NotificationService;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
 
@@ -185,15 +184,6 @@ class OrderService
         }
 
         $order = $this->orderModel->find($orderId);
-
-        if (!empty($order['receiver_phone'])) {
-            $notification = new NotificationService();
-            $notification->sendNotification(
-                $clientId,
-                $order['receiver_phone'],
-                "Hola {$order['receiver_name']}, tu pedido ha sido registrado y estamos buscando un conductor para entregarlo. \xF0\x9F\x93\xA6"
-            );
-        }
 
         return ['status' => true, 'message' => 'Order created successfully', 'data' => $order];
     }
