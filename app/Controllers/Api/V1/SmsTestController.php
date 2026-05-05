@@ -37,7 +37,6 @@ class SmsTestController extends BaseController
         $client      = $clientModel->find(1);
         $result['client_1'] = $client ? [
             'business_name' => $client['business_name'],
-            'sms_enabled'   => $client['sms_enabled'],
         ] : '❌ Cliente 1 no encontrado';
 
         // 3. Última orden con receiver_phone

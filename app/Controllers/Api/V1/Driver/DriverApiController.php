@@ -121,17 +121,15 @@ class DriverApiController extends BaseController
             return $this->respondError('Failed to accept trip.');
         }
 
-        // Notificar al receptor que ya hay conductor asignado
+        // Notificar al receptor que el conductor fue asignado
         if (!empty($order['receiver_phone'])) {
-            log_message('error', "[DriverApiController] Intentando SMS orden #{$id} a phone={$order['receiver_phone']} client_id={$order['client_id']}");
             $notification = new NotificationService();
             $notification->sendNotification(
-                (int) $order['client_id'],
                 $order['receiver_phone'],
                 "Hola {$order['receiver_name']}, tu conductor {$driver['driver_name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
             );
         } else {
-            log_message('error', "[DriverApiController] Orden #{$id} aceptada sin receiver_phone — SMS omitido.");
+            log_message('warning', "[DriverApiController] Orden #{$id} aceptada sin receiver_phone — SMS omitido.");
         }
 
         return $this->respondSuccess('Trip accepted successfully.', $this->orderModel->find($id));
@@ -229,23 +227,6 @@ class DriverApiController extends BaseController
         } catch (\Throwable $e) {
             $db->transRollback();
             return $this->respondError($e->getMessage());
-        }
-
-        // Notificaciones por cambio de estado (fuera de la transacción para no afectar el flujo)
-        if (!empty($order['receiver_phone'])) {
-            $smsMessages = [
-                'en_camino' => "Tu pedido está en camino 🚗 El conductor {$driver['driver_name']} se dirige al destino.",
-                'entregado' => "Tu pedido ha sido entregado. ¡Gracias por usar el servicio! 🙌",
-            ];
-
-            if (isset($smsMessages[$newStatus])) {
-                $notification = new NotificationService();
-                $notification->sendNotification(
-                    (int) $driver['client_id'],
-                    $order['receiver_phone'],
-                    $smsMessages[$newStatus]
-                );
-            }
         }
 
         return $this->respondSuccess('Trip status updated to ' . $newStatus);
