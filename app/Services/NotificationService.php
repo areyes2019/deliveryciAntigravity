@@ -44,12 +44,12 @@ class NotificationService
         $client = $this->clientModel->find($clientId);
 
         if (!$client) {
-            log_message('warning', "[NotificationService] Cliente {$clientId} no encontrado. Notificación cancelada.");
+            log_message('error', "[NotificationService] Cliente {$clientId} no encontrado. Notificación cancelada.");
             return false;
         }
 
         if (empty($client['sms_enabled'])) {
-            log_message('warning', "[NotificationService] SMS desactivado para cliente {$clientId}. Notificación no enviada.");
+            log_message('error', "[NotificationService] SMS desactivado para cliente {$clientId}. sms_enabled=" . ($client['sms_enabled'] ?? 'NULL'));
             return false;
         }
 

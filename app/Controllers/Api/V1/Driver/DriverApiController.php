@@ -123,6 +123,7 @@ class DriverApiController extends BaseController
 
         // Notificar al receptor que ya hay conductor asignado
         if (!empty($order['receiver_phone'])) {
+            log_message('error', "[DriverApiController] Intentando SMS orden #{$id} a phone={$order['receiver_phone']} client_id={$order['client_id']}");
             $notification = new NotificationService();
             $notification->sendNotification(
                 (int) $order['client_id'],
@@ -130,7 +131,7 @@ class DriverApiController extends BaseController
                 "Hola {$order['receiver_name']}, tu conductor {$driver['driver_name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
             );
         } else {
-            log_message('warning', "[DriverApiController] Orden #{$id} aceptada sin receiver_phone — SMS omitido.");
+            log_message('error', "[DriverApiController] Orden #{$id} aceptada sin receiver_phone — SMS omitido.");
         }
 
         return $this->respondSuccess('Trip accepted successfully.', $this->orderModel->find($id));
