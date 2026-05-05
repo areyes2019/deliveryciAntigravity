@@ -9,7 +9,7 @@ const authStore = useAuthStore()
 const route = useRoute()
 
 const isAppView = computed(() => {
-  return ['driver-app', 'driver-simulator', 'wallet', 'profile'].includes(route.name)
+  return ['driver-app', 'simulator', 'wallet', 'profile'].includes(route.name)
 })
 
 const isAdminView = computed(() => {

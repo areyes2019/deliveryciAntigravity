@@ -133,6 +133,11 @@ const canAcceptTrips = computed(() =>
     guaranteeBalance.value === null || guaranteeBalance.value > 0
 )
 
+watch(isDriverOnline, (online) => {
+    if (online && !activeOrder.value) loadAvailableOrders()
+    else if (!online) availableOrders.value = []
+})
+
 
 const avatarUrl = computed(() => {
     const name = (authStore.userName || 'Driver').replace(' ', '+')
@@ -169,6 +174,10 @@ const notifyNewOrder = () => {
 }
 
 const loadAvailableOrders = async () => {
+    if (!isDriverOnline.value) {
+        availableOrders.value = []
+        return
+    }
     isLoading.value = true
     try {
         const res = await api.get('/driver/trips/available')
@@ -178,7 +187,10 @@ const loadAvailableOrders = async () => {
         if (hasNew && availableOrders.value.length > 0) notifyNewOrder()
         availableOrders.value = incoming
     } catch (e) {
-        console.error('Error loading available orders:', e)
+        if (e.response?.status !== 403) {
+            console.error('Error loading available orders:', e)
+        }
+        availableOrders.value = []
     } finally {
         isLoading.value = false
     }
@@ -352,7 +364,7 @@ const restoreActiveTrip = async () => {
     if (activeOrder.value) return  // ya hay viaje cargado, no pisar
     try {
         const res = await api.get('/driver/trips/current')
-        if (res.data.status && res.data.data) {
+        if (res.data.status && res.data.data?.id) {
             activeOrder.value = res.data.data
         }
     } catch (e) {
@@ -693,12 +705,17 @@ const toggleSimulatorMode = () => {
           <!-- Empty state -->
           <template v-else>
             <div class="sheet-content flex flex-col items-center justify-center text-center">
-              <p class="text-7xl mb-6 opacity-25">📡</p>
-              <p class="text-gray-700 font-bold text-xl mb-3">Sin viajes disponibles</p>
-              <p class="text-gray-400 text-[15px]">Estás en línea y esperando solicitudes</p>
+              <p class="text-7xl mb-6 opacity-25">{{ isDriverOnline ? '📡' : '🔴' }}</p>
+              <p class="text-gray-700 font-bold text-xl mb-3">
+                {{ isDriverOnline ? 'Sin viajes disponibles' : 'Estás offline' }}
+              </p>
+              <p class="text-gray-400 text-[15px]">
+                {{ isDriverOnline ? 'Esperando nuevas solicitudes...' : 'Activa el toggle "En línea" para recibir viajes' }}
+              </p>
             </div>
             <div class="sheet-cta">
               <button
+                v-if="isDriverOnline"
                 @click="loadAvailableOrders"
                 class="sheet-btn sheet-btn--blue"
               >
