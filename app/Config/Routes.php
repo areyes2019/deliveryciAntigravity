@@ -66,6 +66,9 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     });
 
 $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
+
+    // TEMPORAL — diagnóstico SMS, eliminar después
+    $routes->get('sms-diag', 'SmsTestController::diagnose');
 });
 
 $routes->options('(:any)', 'Home::index');

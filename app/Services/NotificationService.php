@@ -49,7 +49,7 @@ class NotificationService
         }
 
         if (empty($client['sms_enabled'])) {
-            log_message('info', "[NotificationService] SMS desactivado para cliente {$clientId}. Notificación no enviada.");
+            log_message('warning', "[NotificationService] SMS desactivado para cliente {$clientId}. Notificación no enviada.");
             return false;
         }
 
