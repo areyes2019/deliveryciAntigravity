@@ -129,6 +129,8 @@ class DriverApiController extends BaseController
                 $order['receiver_phone'],
                 "Hola {$order['receiver_name']}, tu conductor {$driver['driver_name']} ya fue asignado y va en camino a recoger tu pedido 🚗"
             );
+        } else {
+            log_message('info', "[DriverApiController] Orden #{$id} aceptada sin receiver_phone — SMS omitido.");
         }
 
         return $this->respondSuccess('Trip accepted successfully.', $this->orderModel->find($id));
