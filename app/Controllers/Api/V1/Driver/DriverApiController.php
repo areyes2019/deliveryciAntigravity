@@ -273,6 +273,10 @@ class DriverApiController extends BaseController
                                    ->whereIn('status', ['tomado', 'arribado', 'en_camino'])
                                    ->first();
 
+        if (!$order) {
+            return $this->respondSuccess('No active trip.', []);
+        }
+
         return $this->respondSuccess('Current trip retrieved.', $order);
     }
 }
