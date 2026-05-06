@@ -14,6 +14,7 @@ export default defineConfig(({ mode }) => ({
       injectRegister: 'auto',
       workbox: {
         globPatterns: ['**/*.{js,css,html,ico,png,svg}'],
+        globIgnores: ['panda_icon.png'],
         cleanupOutdatedCaches: true,
       },
       manifest: {
