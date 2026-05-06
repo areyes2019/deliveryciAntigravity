@@ -31,6 +31,7 @@ class Cors extends BaseConfig
             'http://delivery.test',
             'https://delivery.test',
             'https://unalliterative-semimagnetic-tamiko.ngrok-free.dev',
+            // 'https://tu-dominio-produccion.com',  ← agrega aquí tu dominio real
         ],
 
         'allowedOriginsPatterns' => [

@@ -53,6 +53,7 @@ class Filters extends BaseFilters
      */
     public array $required = [
         'before' => [
+            'cors',       // CORS must run before forcehttps (OPTIONS would get redirected otherwise)
             'forcehttps', // Force Global Secure Requests
             'pagecache',  // Web Page Caching
         ],
@@ -74,7 +75,6 @@ class Filters extends BaseFilters
      */
     public array $globals = [
         'before' => [
-            'corsFilter',
             // 'honeypot',
             // 'csrf',
             // 'invalidchars',
