@@ -73,22 +73,24 @@ let refreshInterval = null
 const silentUpdate = async () => {
     try {
         const oldOrders = [...orders.value]
-        
-        // Fetch new data
-        const [ordersRes, driversRes] = await Promise.all([
+
+        // Fetch orders and drivers independently so a driver failure doesn't block order updates
+        const [ordersResult, driversResult] = await Promise.allSettled([
             api.get('/orders'),
             api.get('/drivers')
         ])
+        const ordersRes = ordersResult.status === 'fulfilled' ? ordersResult.value : null
+        const driversRes = driversResult.status === 'fulfilled' ? driversResult.value : null
 
-        if (ordersRes.data.status) {
+        if (ordersRes?.data?.status) {
             const newOrders = ordersRes.data.data
-            
+
             // Check for key status transitions in the active delivery flow.
             newOrders.forEach(order => {
                 const old = oldOrders.find(o => o.id === order.id)
                 if (old && old.status !== order.status) {
-                    const driver = driversRes.data.data.find(d => String(d.id) === String(order.driver_id))
-                    
+                    const driver = driversRes?.data?.data?.find(d => String(d.id) === String(order.driver_id))
+
                     if (old.status === 'publicado' && (order.status === 'tomado' || order.status === 'arribado' || order.status === 'en_camino')) {
                         showToast(`✅ Viaje #${order.id} aceptado por ${driver?.name || 'un conductor'}`, 'success')
                     } else if (old.status === 'tomado' && order.status === 'arribado') {
@@ -103,11 +105,11 @@ const silentUpdate = async () => {
             stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
         }
 
-        if (driversRes.data.status) {
+        if (driversRes?.data?.status) {
             drivers.value = driversRes.data.data
             stats.value.totalDrivers = drivers.value.length
             stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
-            
+
             // Update Markers on map silently
             if (viewMode.value === 'map') {
                 updateMapMarkers()
@@ -393,6 +395,15 @@ onUnmounted(() => {
     MapService.destroy()
 })
 
+// --- Handler directo al crear orden: usa el objeto ya devuelto por el backend ---
+const onOrderCreated = (newOrder) => {
+    orders.value = [newOrder, ...orders.value]
+    stats.value.activeOrders = orders.value.filter(o =>
+        ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)
+    ).length
+    updateMapMarkers()
+}
+
 // --- Categorized Trip Lists ---
 const pendingOrders = computed(() => {
     return orders.value.filter(o => o.status === 'publicado')
@@ -676,7 +687,7 @@ const activeDrivers = computed(() => {
     <CreateOrderModal
         v-if="showCreateOrder"
         @close="showCreateOrder = false"
-        @created="fetchDashboardData"
+        @created="onOrderCreated"
     />
   </div>
 </template>
