@@ -35,9 +35,12 @@ const loadAvailableOrders = async () => {
     isLoading.value = true
     try {
         const res = await api.get('/driver/trips/available')
-        availableOrders.value = res.data.data
+        availableOrders.value = res.data.data ?? []
     } catch (e) {
-        console.error('Error loading available orders:', e)
+        if (e.response?.status !== 403) {
+            console.error('Error loading available orders:', e)
+        }
+        availableOrders.value = []
     } finally {
         isLoading.value = false
     }

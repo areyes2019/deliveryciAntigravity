@@ -54,6 +54,9 @@ const toggleDriverStatus = async () => {
         const res = await api.post('/driver/toggle-availability')
         if (res.data.status) {
             isDriverOnline.value = res.data.data.is_active === 1
+            if (isDriverOnline.value && !activeOrder.value) {
+                loadAvailableOrders()
+            }
         }
     } catch (e) {
         console.error('Error toggling driver status:', e)
@@ -134,8 +137,7 @@ const canAcceptTrips = computed(() =>
 )
 
 watch(isDriverOnline, (online) => {
-    if (online && !activeOrder.value) loadAvailableOrders()
-    else if (!online) availableOrders.value = []
+    if (!online) availableOrders.value = []
 })
 
 
