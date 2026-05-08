@@ -44,8 +44,8 @@ export const useAuthStore = defineStore('auth', {
       this.user = null
       localStorage.removeItem('token')
       localStorage.removeItem('user')
-      if (window.location.pathname !== '/login') {
-        window.location.href = '/login'
+      if (!window.location.pathname.startsWith('/public/login')) {
+        window.location.href = '/public/login'
       }
     }
   }
