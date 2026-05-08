@@ -135,6 +135,12 @@ class OrderService
                 break;
         }
 
+        // Scheduled orders start as 'pendiente' until their time arrives.
+        // Credits are deducted immediately to reserve funds.
+        $scheduledAt    = !empty($data['scheduled_at']) ? $data['scheduled_at'] : null;
+        $isScheduled    = $scheduledAt && strtotime($scheduledAt) > time();
+        $initialStatus  = $isScheduled ? 'pendiente' : 'publicado';
+
         $this->db->transStart();
 
         $orderData = [
@@ -148,7 +154,8 @@ class OrderService
             'receiver_name'    => $data['receiver_name'] ?? null,
             'receiver_phone'   => $data['receiver_phone'] ?? null,
             'description'      => $data['description'] ?? null,
-            'status'           => 'publicado',
+            'scheduled_at'     => $scheduledAt,
+            'status'           => $initialStatus,
             'payment_type'     => $paymentType,
             'cost'             => $cost,
             'distance_km'      => $distanceKm,
@@ -165,7 +172,7 @@ class OrderService
         }
 
         $creditDeducted = $this->creditService->deductCredit($clientId, $orderId, 'Order created');
-        
+
         if (!$creditDeducted) {
             $this->db->transRollback();
             return ['status' => false, 'message' => 'Error al descontar saldo: Créditos insuficientes para completar la transacción.'];
@@ -174,7 +181,7 @@ class OrderService
         $this->statusLogModel->insert([
             'order_id'        => $orderId,
             'previous_status' => null,
-            'new_status'      => 'publicado'
+            'new_status'      => $initialStatus,
         ]);
 
         $this->db->transComplete();
@@ -286,5 +293,36 @@ class OrderService
         }
 
         return ['status' => true, 'message' => 'OK'];
+    }
+
+    /**
+     * Publica las órdenes programadas cuya hora ya llegó.
+     * Se llama en cada fetch de órdenes — no requiere cron.
+     */
+    public function publishDueOrders(): void
+    {
+        $now = date('Y-m-d H:i:s');
+
+        $due = $this->orderModel
+            ->where('status', 'pendiente')
+            ->where('scheduled_at IS NOT NULL')
+            ->where('scheduled_at <=', $now)
+            ->findAll();
+
+        foreach ($due as $order) {
+            $this->db->transStart();
+
+            $this->orderModel->update($order['id'], ['status' => 'publicado']);
+
+            $this->statusLogModel->insert([
+                'order_id'        => $order['id'],
+                'previous_status' => 'pendiente',
+                'new_status'      => 'publicado',
+            ]);
+
+            $this->db->transComplete();
+
+            log_message('info', "[OrderService] Orden #{$order['id']} publicada automáticamente (scheduled_at={$order['scheduled_at']})");
+        }
     }
 }

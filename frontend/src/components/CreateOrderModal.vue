@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, watch } from 'vue'
+import { ref, computed, onMounted, watch, reactive } from 'vue'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 
@@ -12,6 +12,32 @@ const routeTime = ref('')
 const outOfZoneError = ref('')
 const submitting = ref(false)
 const clientZones = ref([])
+
+// ─── Scheduling ───────────────────────────────────────────────────────────────
+const scheduledDate = ref(null)   // 'YYYY-MM-DD' | null
+const scheduledHour = ref('12')   // '01'–'12'
+const scheduledMinute = ref('00') // '00','15','30','45'
+const scheduledAmpm = ref('PM')
+
+const tomorrowDate = computed(() => {
+  const d = new Date(); d.setDate(d.getDate() + 1)
+  return d.toISOString().split('T')[0]
+})
+const afterTomorrowDate = computed(() => {
+  const d = new Date(); d.setDate(d.getDate() + 2)
+  return d.toISOString().split('T')[0]
+})
+const formattedScheduleDate = computed(() => {
+  if (!scheduledDate.value) return ''
+  const [y, m, day] = scheduledDate.value.split('-')
+  const names = ['Ene','Feb','Mar','Abr','May','Jun','Jul','Ago','Sep','Oct','Nov','Dic']
+  return `${day} ${names[parseInt(m) - 1]}`
+})
+
+const setScheduleDate = (which) => {
+  scheduledDate.value = which === 'tomorrow' ? tomorrowDate.value : afterTomorrowDate.value
+}
+const clearSchedule = () => { scheduledDate.value = null }
 
 let mapInstance = null
 let pickupMarker = null
@@ -31,7 +57,8 @@ const form = ref({
   pickup_lng: null,
   drop_lat: null,
   drop_lng: null,
-  distance_km: null
+  distance_km: null,
+  scheduled_at: null
 })
 
 // ─── Template refs for the two address inputs ───────────────────────────────
@@ -154,6 +181,16 @@ const saveOrder = async () => {
     alert(outOfZoneError.value)
     return
   }
+  // Build scheduled_at in 'YYYY-MM-DD HH:mm:ss' (24hr) from the 12hr picker
+  if (scheduledDate.value) {
+    let h = parseInt(scheduledHour.value)
+    if (scheduledAmpm.value === 'PM' && h !== 12) h += 12
+    if (scheduledAmpm.value === 'AM' && h === 12) h = 0
+    form.value.scheduled_at = `${scheduledDate.value} ${String(h).padStart(2, '0')}:${scheduledMinute.value}:00`
+  } else {
+    form.value.scheduled_at = null
+  }
+
   submitting.value = true
   try {
     const response = await api.post('/orders', form.value)
@@ -434,6 +471,53 @@ onMounted(async () => {
             ></textarea>
           </div>
 
+          <!-- Schedule -->
+          <div class="form-group">
+            <label>📅 Programar envío <span class="optional-tag">opcional</span></label>
+            <div class="schedule-date-row">
+              <button
+                type="button"
+                class="date-chip"
+                :class="{ active: scheduledDate === tomorrowDate }"
+                @click="setScheduleDate('tomorrow')"
+              >Mañana</button>
+              <button
+                type="button"
+                class="date-chip"
+                :class="{ active: scheduledDate === afterTomorrowDate }"
+                @click="setScheduleDate('after_tomorrow')"
+              >Pasado mañana</button>
+              <button
+                v-if="scheduledDate"
+                type="button"
+                class="date-chip clear"
+                @click="clearSchedule"
+              >✕ Quitar</button>
+            </div>
+
+            <transition name="fade-down">
+              <div v-if="scheduledDate" class="time-picker-row">
+                <span class="schedule-date-label">{{ formattedScheduleDate }}</span>
+                <div class="time-selects">
+                  <select v-model="scheduledHour" class="time-select">
+                    <option v-for="h in 12" :key="h" :value="String(h).padStart(2,'0')">{{ String(h).padStart(2,'0') }}</option>
+                  </select>
+                  <span class="time-colon">:</span>
+                  <select v-model="scheduledMinute" class="time-select">
+                    <option value="00">00</option>
+                    <option value="15">15</option>
+                    <option value="30">30</option>
+                    <option value="45">45</option>
+                  </select>
+                  <div class="ampm-toggle">
+                    <button type="button" :class="{ active: scheduledAmpm === 'AM' }" @click="scheduledAmpm = 'AM'">AM</button>
+                    <button type="button" :class="{ active: scheduledAmpm === 'PM' }" @click="scheduledAmpm = 'PM'">PM</button>
+                  </div>
+                </div>
+              </div>
+            </transition>
+          </div>
+
           <!-- Payment type -->
           <div class="form-group">
             <label>💳 ¿Quién paga el envío?</label>
@@ -652,9 +736,49 @@ onMounted(async () => {
 .pcard-sub { font-size: 0.72rem; color: #6B7280; }
 .payment-card.active .pcard-title { color: #4338CA; }
 
-/* Fade-down transition for product amount field */
+/* Fade-down transition */
 .fade-down-enter-active, .fade-down-leave-active { transition: all 0.25s ease; }
 .fade-down-enter-from, .fade-down-leave-to { opacity: 0; transform: translateY(-8px); }
+
+/* Schedule section */
+.optional-tag {
+  font-weight: 400; font-size: 0.75rem; color: #9CA3AF;
+  background: #F3F4F6; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.3rem;
+}
+.schedule-date-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
+.date-chip {
+  padding: 0.45rem 1rem; border-radius: 20px; border: 1.5px solid #E5E7EB;
+  background: white; font-size: 0.82rem; font-weight: 600; cursor: pointer;
+  transition: all 0.2s; color: #374151; font-family: inherit;
+}
+.date-chip:hover { border-color: #A5B4FC; background: #F5F7FF; }
+.date-chip.active { border-color: #6366F1; background: #EEF2FF; color: #4338CA; }
+.date-chip.clear { border-color: #FCA5A5; color: #DC2626; background: #FFF5F5; }
+.date-chip.clear:hover { background: #FEE2E2; }
+
+.time-picker-row {
+  display: flex; align-items: center; gap: 1rem; margin-top: 0.6rem;
+  padding: 0.6rem 0.9rem; border-radius: 10px;
+  background: #F5F7FF; border: 1.5px solid #C7D2FE;
+}
+.schedule-date-label { font-size: 0.85rem; font-weight: 700; color: #4338CA; min-width: 50px; }
+.time-selects { display: flex; align-items: center; gap: 0.4rem; }
+.time-select {
+  padding: 0.35rem 0.5rem; border-radius: 8px;
+  border: 1.5px solid #C7D2FE; background: white;
+  font-size: 0.95rem; font-weight: 700; color: #1F2937;
+  font-family: inherit; cursor: pointer; outline: none;
+}
+.time-select:focus { border-color: #6366F1; }
+.time-colon { font-weight: 800; font-size: 1.1rem; color: #6366F1; }
+.ampm-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1.5px solid #C7D2FE; }
+.ampm-toggle button {
+  padding: 0.35rem 0.65rem; border: none; background: white;
+  font-size: 0.78rem; font-weight: 700; cursor: pointer;
+  color: #6B7280; font-family: inherit; transition: all 0.15s;
+}
+.ampm-toggle button.active { background: #6366F1; color: white; }
+.ampm-toggle button:not(.active):hover { background: #EEF2FF; }
 
 /* Footer */
 .modal-footer { 

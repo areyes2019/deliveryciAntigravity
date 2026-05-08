@@ -47,7 +47,7 @@ class OrderModel extends Model
     protected $allowedFields    = [
         'uuid', 'client_id', 'driver_id', 'pickup_lat', 'pickup_lng', 'pickup_address',
         'drop_lat', 'drop_lng', 'drop_address', 'receiver_name', 'receiver_phone',
-        'description', 'status', 'payment_type', 'cost', 'distance_km', 'product_amount',
+        'description', 'scheduled_at', 'status', 'payment_type', 'cost', 'distance_km', 'product_amount',
         'total_to_collect', 'paid'
     ];
 

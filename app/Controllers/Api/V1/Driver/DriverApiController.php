@@ -40,9 +40,14 @@ class DriverApiController extends BaseController
             return $this->respondError('You must be online to view available trips.', [], 403);
         }
 
-        $orders = $this->orderModel->where('status', 'publicado')
-                                   ->where('client_id', $driver['client_id'])
-                                   ->findAll();
+        $orders = $this->orderModel
+            ->where('status', 'publicado')
+            ->where('client_id', $driver['client_id'])
+            ->groupStart()
+                ->where('scheduled_at IS NULL')
+                ->orWhere('scheduled_at <=', date('Y-m-d H:i:s'))
+            ->groupEnd()
+            ->findAll();
 
         return $this->respondSuccess('Available trips retrieved.', $orders);
     }

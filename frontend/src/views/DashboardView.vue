@@ -409,6 +409,15 @@ const pendingOrders = computed(() => {
     return orders.value.filter(o => o.status === 'publicado')
 })
 
+const scheduledOrders = computed(() => {
+    const now = new Date()
+    return orders.value.filter(o =>
+        o.status === 'pendiente' &&
+        o.scheduled_at &&
+        new Date(o.scheduled_at) > now
+    )
+})
+
 const activeOrdersList = computed(() => {
     return orders.value.filter(o => ['tomado', 'arribado', 'en_camino'].includes(o.status))
 })
@@ -499,6 +508,27 @@ const activeDrivers = computed(() => {
                         </div>
                         <div class="sidebar-empty mini" v-else>
                             No hay viajes pendientes.
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Scheduled Trips Section -->
+                <div class="sidebar-section" style="border-top: 2px solid #f3f4f6;" v-if="scheduledOrders.length > 0">
+                    <div class="sidebar-header">
+                        <h3>Programados</h3>
+                        <span class="badge scheduled">{{ scheduledOrders.length }}</span>
+                    </div>
+                    <div class="sidebar-list scrollable">
+                        <div v-for="order in scheduledOrders" :key="order.id" class="order-card scheduled-card">
+                            <div class="order-header">
+                                <span class="id">📅 #{{ order.id }}</span>
+                                <span class="scheduled-time">
+                                    {{ new Date(order.scheduled_at).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) }}
+                                    {{ new Date(order.scheduled_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) }}
+                                </span>
+                            </div>
+                            <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
+                            <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
                         </div>
                     </div>
                 </div>
@@ -805,6 +835,7 @@ const activeDrivers = computed(() => {
 .sidebar-header .badge { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
 .sidebar-header .badge.pending { background: #FEF3C7; color: #92400E; }
 .sidebar-header .badge.active-now { background: #DBEAFE; color: #1E40AF; }
+.sidebar-header .badge.scheduled { background: #F3E8FF; color: #6D28D9; }
 
 .sidebar-list {
     flex: 1; overflow-y: auto; display: flex; flex-direction: column;
@@ -850,6 +881,9 @@ const activeDrivers = computed(() => {
     border-radius: 4px;
     text-transform: uppercase;
 }
+.order-card.scheduled-card { border-left: 3px solid #8B5CF6; }
+.order-card.scheduled-card:hover { border-left-color: #6D28D9; background: #FAF5FF; }
+.scheduled-time { font-size: 0.7rem; color: #6D28D9; font-weight: 700; }
 .status-tag.tomado { background: #D1FAE5; color: #065F46; }
 .status-tag.arribado { background: #E0F2FE; color: #075985; }
 .status-tag.en_camino { background: #DBEAFE; color: #1E40AF; }

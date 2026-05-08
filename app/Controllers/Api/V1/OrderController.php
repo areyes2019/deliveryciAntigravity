@@ -27,6 +27,9 @@ class OrderController extends BaseController
             return $this->respondUnauthorized();
         }
 
+        // Auto-publish scheduled orders whose time has arrived (lazy approach, no cron needed)
+        $this->orderService->publishDueOrders();
+
         $orderModel = new \App\Models\OrderModel();
 
         if ($userData['role'] === 'superadmin') {
@@ -166,20 +169,19 @@ class OrderController extends BaseController
             return $this->respondError('Cannot cancel order in current status: ' . $order['status']);
         }
 
-        // Actualizar estado
+        // Actualizar estado: vuelve a publicado para que otro driver lo tome
         $orderModel->update($id, [
-            'status' => 'cancelled_by_driver',
-            'cancelled_at' => date('Y-m-d H:i:s'),
-            'driver_id' => null  // Liberar al conductor
+            'status'    => 'publicado',
+            'driver_id' => null,
         ]);
 
         // Registrar en log de estados
         $logModel = new \App\Models\OrderStatusLogModel();
         $logModel->insert([
-            'order_id' => $id,
-            'status' => 'cancelled_by_driver',
-            'user_id' => $userData['id'],
-            'created_at' => date('Y-m-d H:i:s')
+            'order_id'   => $id,
+            'status'     => 'publicado',
+            'user_id'    => $userData['id'],
+            'created_at' => date('Y-m-d H:i:s'),
         ]);
 
         return $this->respondSuccess('Order cancelled successfully');
