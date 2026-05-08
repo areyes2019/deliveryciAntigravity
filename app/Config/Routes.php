@@ -63,6 +63,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
         $routes->post('location', 'Driver\DriverApiController::updateLocation');
         $routes->post('toggle-availability', 'DriverController::toggleAvailability');
         $routes->post('go-offline', 'DriverController::goOffline');
+        $routes->put('orders/(:num)/cancel', 'OrderController::cancelByDriver/$1');
     });
 
 $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept

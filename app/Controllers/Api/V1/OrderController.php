@@ -5,6 +5,7 @@ namespace App\Controllers\Api\V1;
 use App\Controllers\BaseController;
 use App\Services\OrderService;
 use App\Models\ClientModel;
+use App\Models\DriverModel;
 use App\Traits\ApiResponseTrait;
 
 class OrderController extends BaseController
@@ -130,5 +131,57 @@ class OrderController extends BaseController
         }
 
         return $this->respondError($result['message']);
+    }
+
+    public function cancelByDriver($id)
+    {
+        $userData = $this->request->jwtPayload ?? null;
+
+        if (!$userData || $userData['role'] !== 'driver') {
+            return $this->respondUnauthorized('Only drivers can cancel via this endpoint.');
+        }
+
+        $driverModel = new \App\Models\DriverModel();
+        $driver = $driverModel->where('user_id', $userData['id'])->first();
+
+        if (!$driver) {
+            return $this->respondError('Driver profile not found', [], 404);
+        }
+
+        $orderModel = new \App\Models\OrderModel();
+        $order = $orderModel->find($id);
+
+        if (!$order) {
+            return $this->respondError('Order not found', [], 404);
+        }
+
+        // Verificar que el conductor es el asignado (driver_id = drivers.id, no users.id)
+        if ($order['driver_id'] != $driver['id']) {
+            return $this->respondUnauthorized('You are not assigned to this order.');
+        }
+
+        // Estados permitidos para cancelación por driver
+        $allowedStatuses = ['tomado', 'arribado', 'en_camino'];
+        if (!in_array($order['status'], $allowedStatuses)) {
+            return $this->respondError('Cannot cancel order in current status: ' . $order['status']);
+        }
+
+        // Actualizar estado
+        $orderModel->update($id, [
+            'status' => 'cancelled_by_driver',
+            'cancelled_at' => date('Y-m-d H:i:s'),
+            'driver_id' => null  // Liberar al conductor
+        ]);
+
+        // Registrar en log de estados
+        $logModel = new \App\Models\OrderStatusLogModel();
+        $logModel->insert([
+            'order_id' => $id,
+            'status' => 'cancelled_by_driver',
+            'user_id' => $userData['id'],
+            'created_at' => date('Y-m-d H:i:s')
+        ]);
+
+        return $this->respondSuccess('Order cancelled successfully');
     }
 }
