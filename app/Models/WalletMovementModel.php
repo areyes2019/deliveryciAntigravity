@@ -137,20 +137,36 @@ class WalletMovementModel extends Model
     }
 
     /**
-     * Get today's earnings and trip count for a driver (server-side date filter)
+     * Get today's earnings and trip count for a driver (server-side date filter).
+     *
+     * Trips are counted from order_status_log so that prepaid trips (which generate
+     * no income movement) are still reflected in the counter.
+     * Earnings sum only income movements in the earnings wallet.
      */
     public function getTodayStats(int $driverId): array
     {
-        $rows = $this->where('driver_id', $driverId)
-                     ->where('type', self::TYPE_INCOME)
-                     ->where('DATE(created_at)', date('Y-m-d'))
-                     ->findAll();
+        $db    = \Config\Database::connect();
+        $today = date('Y-m-d');
 
-        $earnings = array_reduce($rows, fn($sum, $m) => $sum + (float)$m['amount'], 0.0);
+        $tripCount = (int) $db->table('order_status_log osl')
+            ->join('orders o', 'o.id = osl.order_id')
+            ->where('o.driver_id', $driverId)
+            ->where('osl.new_status', 'entregado')
+            ->where('DATE(osl.log_time)', $today)
+            ->countAllResults();
+
+        $earningsRow = $this->builder()
+            ->select('COALESCE(SUM(amount), 0) AS total', false)
+            ->where('driver_id', $driverId)
+            ->where('type', self::TYPE_INCOME)
+            ->where('wallet_type', self::WALLET_EARNINGS)
+            ->where('DATE(created_at)', $today)
+            ->get()
+            ->getRowArray();
 
         return [
-            'earnings' => round($earnings, 2),
-            'trips'    => count($rows),
+            'earnings' => round((float)($earningsRow['total'] ?? 0.0), 2),
+            'trips'    => $tripCount,
         ];
     }
 }

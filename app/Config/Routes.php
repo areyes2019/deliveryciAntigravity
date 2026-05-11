@@ -58,6 +58,7 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->group('driver', ['filter' => 'jwt:driver'], function($routes) {
         $routes->get('trips/available', 'Driver\DriverApiController::availableTrips');
         $routes->get('trips/current', 'Driver\DriverApiController::getCurrentTrip');
+        $routes->get('today', 'Driver\DriverApiController::todayStats');
         $routes->post('trips/(:num)/accept', 'Driver\DriverApiController::acceptTrip/$1');
         $routes->post('trips/(:num)/status', 'Driver\DriverApiController::updateStatus/$1');
         $routes->post('location', 'Driver\DriverApiController::updateLocation');
@@ -71,6 +72,16 @@ $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
     // TEMPORAL — diagnóstico SMS, eliminar después
     $routes->get('sms-diag', 'SmsTestController::diagnose');
 });
+
+// ─────────────────────────────────────────────────────────────────────────────
+// MÓDULO IA — FASE 1: Parseo de mensajes WhatsApp
+// ─────────────────────────────────────────────────────────────────────────────
+// Endpoint público para interpretar mensajes de WhatsApp en lenguaje natural
+// y convertirlos en datos estructurados de envío.
+//
+// Endpoint: POST /api/ia/procesar-mensaje
+// ─────────────────────────────────────────────────────────────────────────────
+$routes->post('api/ia/procesar-mensaje', 'Api\V1\AiParserController::procesarMensaje', ['filter' => 'corsFilter']);
 
 $routes->options('(:any)', 'Home::index');
 

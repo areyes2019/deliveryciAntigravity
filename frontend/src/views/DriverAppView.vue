@@ -37,10 +37,8 @@ const completeButtonRef = ref(null)
 const walletBounce = ref(false)
 
 const fetchTodayEarnings = async () => {
-    const driverId = authStore.user?.driver?.id
-    if (!driverId) return
     try {
-        const res = await api.get(`/wallet/today/${driverId}`)
+        const res = await api.get('/driver/today')
         if (res.data.status) {
             todayEarnings.value     = parseFloat(res.data.data.earnings)          || 0
             todayTrips.value        = parseInt(res.data.data.trips)              || 0
@@ -448,6 +446,12 @@ onMounted(async () => {
             if (driverId.value) {
                 const driverChannel = subscribe(`driver.${driverId.value}`)
                 driverChannel.bind('order-cancelled', handleOrderCancelled)
+                driverChannel.bind('wallet-updated', (data) => {
+                    todayEarnings.value     = parseFloat(data.earnings)          || 0
+                    todayTrips.value        = parseInt(data.trips)              || 0
+                    guaranteeBalance.value  = parseFloat(data.guarantee_balance) || 0
+                    viajesDisponibles.value = data.viajes_disponibles ?? null
+                })
             }
         }
     } catch (e) {

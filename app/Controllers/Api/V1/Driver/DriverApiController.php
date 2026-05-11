@@ -165,6 +165,38 @@ class DriverApiController extends BaseController
     }
 
     /**
+     * GET /api/v1/driver/today
+     * Ganancias del día para el driver autenticado (sin pasar ID en la URL).
+     */
+    public function todayStats()
+    {
+        $userData = $this->request->jwtPayload;
+        $driver   = $this->driverModel->where('user_id', $userData['id'])->first();
+
+        if (!$driver) {
+            return $this->respondError('Driver profile not found.', [], 404);
+        }
+
+        $walletService = new WalletService();
+        $stats         = $walletService->getTodayStats($driver['id']);
+        $guarantee     = $walletService->getGuaranteeBalance($driver['id']);
+
+        $billing           = (new \App\Models\DriverBillingConfigModel())->getByClient($driver['client_id']);
+        $viajesDisponibles = null;
+        if ($billing && $billing['tipo_esquema'] === 'credito') {
+            $precio            = (float)($billing['precio_credito'] ?? 0);
+            $viajesDisponibles = $precio > 0 ? (int) floor($guarantee / $precio) : 0;
+        }
+
+        return $this->respondSuccess('Today stats retrieved.', [
+            'earnings'           => (float)$stats['earnings'],
+            'trips'              => (int)$stats['trips'],
+            'guarantee_balance'  => (float)$guarantee,
+            'viajes_disponibles' => $viajesDisponibles,
+        ]);
+    }
+
+    /**
      * Update trip status
      */
     public function updateStatus($id)
@@ -201,7 +233,8 @@ class DriverApiController extends BaseController
 
         $previousStatus = $order['status'];
 
-        $db = \Config\Database::connect();
+        $db           = \Config\Database::connect();
+        $walletService = null;
         $db->transBegin();
 
         try {
@@ -256,6 +289,30 @@ class DriverApiController extends BaseController
         } catch (\Throwable $e) {
             $db->transRollback();
             return $this->respondError($e->getMessage());
+        }
+
+        // Post-commit: notificar al driver con sus ganancias actualizadas en tiempo real
+        if ($newStatus === 'entregado' && $walletService !== null) {
+            try {
+                $freshStats       = $walletService->getTodayStats($driver['id']);
+                $guaranteeBalance = $walletService->getGuaranteeBalance($driver['id']);
+
+                $billing           = (new DriverBillingConfigModel())->getByClient($driver['client_id']);
+                $viajesDisponibles = null;
+                if ($billing && $billing['tipo_esquema'] === 'credito') {
+                    $precio            = (float)($billing['precio_credito'] ?? 0);
+                    $viajesDisponibles = $precio > 0 ? (int) floor($guaranteeBalance / $precio) : 0;
+                }
+
+                PusherService::trigger('driver.' . $driver['id'], 'wallet-updated', [
+                    'earnings'           => (float)$freshStats['earnings'],
+                    'trips'              => (int)$freshStats['trips'],
+                    'guarantee_balance'  => (float)$guaranteeBalance,
+                    'viajes_disponibles' => $viajesDisponibles,
+                ]);
+            } catch (\Throwable $e) {
+                log_message('error', '[DriverApiController] wallet-updated trigger failed: ' . $e->getMessage());
+            }
         }
 
         return $this->respondSuccess('Trip status updated to ' . $newStatus);

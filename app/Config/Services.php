@@ -19,14 +19,23 @@ use CodeIgniter\Config\BaseService;
  */
 class Services extends BaseService
 {
-    /*
-     * public static function example($getShared = true)
-     * {
-     *     if ($getShared) {
-     *         return static::getSharedInstance('example');
-     *     }
+    /**
+     * Servicio de Parseo con IA
      *
-     *     return new \CodeIgniter\Example();
-     * }
+     * Interpreta mensajes de WhatsApp en lenguaje natural y los convierte
+     * en datos estructurados de envío utilizando la API de DeepSeek.
+     * 
+     * Uso: service('aiParserService') o \Config\Services::aiParserService()
+     *
+     * @param bool $getShared Si es true, retorna la misma instancia (singleton).
+     * @return \App\Services\AiParserService
      */
+    public static function aiParserService(bool $getShared = true): \App\Services\AiParserService
+    {
+        if ($getShared) {
+            return static::getSharedInstance('aiParserService');
+        }
+
+        return new \App\Services\AiParserService();
+    }
 }
