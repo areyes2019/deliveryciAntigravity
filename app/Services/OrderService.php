@@ -7,6 +7,7 @@ use App\Models\OrderStatusLogModel;
 use App\Models\ClientModel;
 use App\Models\GeofenceModel;
 use App\Helpers\GeoHelper;
+use App\Services\PusherService;
 use CodeIgniter\Database\BaseConnection;
 use Config\Database;
 
@@ -192,6 +193,14 @@ class OrderService
 
         $order = $this->orderModel->find($orderId);
 
+        if ($initialStatus === 'publicado') {
+            PusherService::trigger(
+                'trips.' . $clientId,
+                'new-trip',
+                ['trip_id' => (int) $orderId]
+            );
+        }
+
         return ['status' => true, 'message' => 'Order created successfully', 'data' => $order];
     }
 
@@ -224,13 +233,17 @@ class OrderService
             return ['status' => false, 'message' => 'Unauthorized to cancel this order'];
         }
 
-        if ($order['status'] !== 'publicado') {
-            return ['status' => false, 'message' => 'Only published orders can be cancelled'];
+        if (!in_array($order['status'], ['publicado', 'tomado'])) {
+            return ['status' => false, 'message' => 'Solo se pueden cancelar órdenes en estado publicado o tomado'];
         }
 
         $this->db->transStart();
 
-        $this->orderModel->update($orderId, ['status' => 'cancelado']);
+        $updateData = ['status' => 'cancelado'];
+        if ($order['status'] === 'tomado') {
+            $updateData['driver_id'] = null;
+        }
+        $this->orderModel->update($orderId, $updateData);
 
         // Refund credit
         $refunded = $this->creditService->refundCredit($clientId, $orderId, 'Refund for cancelled order');
@@ -242,7 +255,7 @@ class OrderService
 
         $this->statusLogModel->insert([
             'order_id'        => $orderId,
-            'previous_status' => 'publicado',
+            'previous_status' => $order['status'],
             'new_status'      => 'cancelado'
         ]);
 
@@ -323,6 +336,12 @@ class OrderService
             $this->db->transComplete();
 
             log_message('info', "[OrderService] Orden #{$order['id']} publicada automáticamente (scheduled_at={$order['scheduled_at']})");
+
+            PusherService::trigger(
+                'trips.' . $order['client_id'],
+                'new-trip',
+                ['trip_id' => (int) $order['id']]
+            );
         }
     }
 }

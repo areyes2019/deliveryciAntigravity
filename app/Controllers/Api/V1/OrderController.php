@@ -4,6 +4,7 @@ namespace App\Controllers\Api\V1;
 
 use App\Controllers\BaseController;
 use App\Services\OrderService;
+use App\Services\PusherService;
 use App\Models\ClientModel;
 use App\Models\DriverModel;
 use App\Traits\ApiResponseTrait;
@@ -106,8 +107,13 @@ class OrderController extends BaseController
             return $this->respondUnauthorized('Unauthorized to cancel order.');
         }
 
+        $orderModel = new \App\Models\OrderModel();
+        $order = $orderModel->find($id);
+        if (!$order) {
+            return $this->respondError('Order not found', [], 404);
+        }
+
         $clientModel = new ClientModel();
-        // If it's a client admin, verify client id
         if ($userData['role'] === 'client_admin') {
             $client = $clientModel->where('user_id', $userData['id'])->first();
             if (!$client) {
@@ -115,21 +121,31 @@ class OrderController extends BaseController
             }
             $clientId = $client['id'];
         } else {
-             // For superadmin, we might need to look up the order and get the clientId 
-             // but let's assume they shouldn't cancel directly from this endpoint or just allow it if needed. 
-             // For simplicity based on Service logic, pass the clientId of the order, 
-             // let's fetch the order first to get its client_id
-             $orderModel = new \App\Models\OrderModel();
-             $order = $orderModel->find($id);
-             if (!$order) {
-                 return $this->respondError('Order not found', [], 404);
-             }
-             $clientId = $order['client_id'];
+            $clientId = $order['client_id'];
         }
+
+        // Capturar driver_id ANTES de cancelar — cancelOrder puede limpiar el campo
+        $assignedDriverId = $order['driver_id'] ?? null;
 
         $result = $this->orderService->cancelOrder($id, $clientId);
 
         if ($result['status']) {
+            // Notificar al driver asignado para que limpie su viaje activo
+            if ($assignedDriverId) {
+                PusherService::trigger(
+                    'driver.' . $assignedDriverId,
+                    'order-cancelled',
+                    ['order_id' => (int) $id]
+                );
+            }
+
+            // Notificar al panel de órdenes del cliente
+            PusherService::trigger(
+                'orders.' . $clientId,
+                'order-cancelled',
+                ['order_id' => (int) $id]
+            );
+
             return $this->respondSuccess($result['message']);
         }
 
@@ -183,6 +199,12 @@ class OrderController extends BaseController
             'user_id'    => $userData['id'],
             'created_at' => date('Y-m-d H:i:s'),
         ]);
+
+        PusherService::trigger(
+            'trips.' . $order['client_id'],
+            'new-trip',
+            ['trip_id' => (int) $id]
+        );
 
         return $this->respondSuccess('Order cancelled successfully');
     }

@@ -3,6 +3,7 @@ import { ref, onMounted, computed, watch, onUnmounted } from 'vue'
 import MapService from '../services/maps/MapService'
 import api from '../api'
 import { useAuthStore } from '../stores/auth'
+import { subscribe, unsubscribe } from '../services/realtime'
 import DriverStatusToggle from '../components/DriverStatusToggle.vue'
 import ModeToggle from '../components/ModeToggle.vue'
 
@@ -12,7 +13,10 @@ const authStore = useAuthStore()
 const availableOrders = ref([])
 const activeOrder = ref(null)
 const isLoading = ref(false)
+const isAccepting = ref(false)
 const mapLoading = ref(true)
+const driverClientId = ref(null)   // se puebla desde /auth/me para nombrar el canal Pusher
+const driverId = ref(null)         // drivers.id — canal personal driver.{id}
 const statusError = ref('')
 const showRouteDetail = ref(false)
 
@@ -90,6 +94,29 @@ let lastSyncTime = 0
 const arrivedAtPickup = ref(false)
 const showArrivalToast = ref(false)
 let arrivalToastTimer = null
+
+// --- Cancellation toast ---
+const showCancelledToast = ref(false)
+let cancelledToastTimer = null
+
+const handleOrderCancelled = ({ order_id }) => {
+    if (!activeOrder.value || activeOrder.value.id !== order_id) return
+    stopSimulation()
+    activeOrder.value = null
+    routePoints.value = []
+    currentIndex.value = 0
+    progress.value = 0
+    tripPhase.value = 'to_pickup'
+    MapService.clearRoutes()
+    MapService.clearMarkers()
+
+    showCancelledToast.value = true
+    if (cancelledToastTimer) clearTimeout(cancelledToastTimer)
+    cancelledToastTimer = setTimeout(() => { showCancelledToast.value = false }, 5000)
+
+    if (navigator.vibrate) navigator.vibrate([200, 100, 200, 100, 400])
+    loadAvailableOrders()
+}
 
 // Haversine distance in metres between two {lat, lng} points
 const distanceMeters = (a, b) => {
@@ -199,7 +226,10 @@ const loadAvailableOrders = async () => {
 }
 
 const acceptOrder = async (order) => {
-    if (activeOrder.value) return
+    if (activeOrder.value || isAccepting.value) return
+    isAccepting.value = true
+    // Optimistic UI: quitar el viaje de la lista inmediatamente para feedback instantáneo
+    availableOrders.value = availableOrders.value.filter(o => o.id !== order.id)
     try {
         const res = await api.post(`/driver/trips/${order.id}/accept`)
         if (res.data.status) {
@@ -209,7 +239,17 @@ const acceptOrder = async (order) => {
             loadRoute()
         }
     } catch (e) {
-        alert(e.response?.data?.message || 'Error al aceptar el viaje')
+        // Rollback optimista: devolver el viaje a la lista y refrescar desde servidor
+        availableOrders.value = [order, ...availableOrders.value]
+        if (e.response?.status === 409) {
+            // Otro driver llegó primero — refrescar lista para quitar el viaje tomado
+            await loadAvailableOrders()
+            alert('Este viaje ya fue tomado por otro conductor.')
+        } else {
+            alert(e.response?.data?.message || 'Error al aceptar el viaje')
+        }
+    } finally {
+        isAccepting.value = false
     }
 }
 
@@ -386,7 +426,29 @@ onMounted(async () => {
     try {
         const meRes = await api.get('/auth/me')
         if (meRes.data.status && meRes.data.data?.driver) {
-            isDriverOnline.value = parseInt(meRes.data.data.driver.is_active) === 1
+            const driver = meRes.data.data.driver
+            isDriverOnline.value = parseInt(driver.is_active) === 1
+            driverClientId.value = driver.client_id ?? null
+            driverId.value = driver.id ?? null
+
+            // Canal de flota: trips.{client_id} — compartido entre todos los drivers de la empresa
+            if (driverClientId.value) {
+                const fleetChannel = subscribe(`trips.${driverClientId.value}`)
+
+                fleetChannel.bind('trip-taken', ({ trip_id }) => {
+                    availableOrders.value = availableOrders.value.filter(o => o.id !== trip_id)
+                })
+
+                fleetChannel.bind('new-trip', () => {
+                    if (isDriverOnline.value && !activeOrder.value) loadAvailableOrders()
+                })
+            }
+
+            // Canal personal: driver.{id} — eventos exclusivos para este conductor
+            if (driverId.value) {
+                const driverChannel = subscribe(`driver.${driverId.value}`)
+                driverChannel.bind('order-cancelled', handleOrderCancelled)
+            }
         }
     } catch (e) {
         console.warn('Could not fetch driver status:', e)
@@ -399,7 +461,8 @@ onMounted(async () => {
 
     await restoreActiveTrip()
     if (!activeOrder.value) loadAvailableOrders()
-    pollInterval = setInterval(() => { if (!activeOrder.value) loadAvailableOrders() }, 10000)
+    // Pusher maneja los cambios instantáneos; el polling es solo red de seguridad (fallback).
+    pollInterval = setInterval(() => { if (!activeOrder.value && !isAccepting.value) loadAvailableOrders() }, 8000)
 
     document.addEventListener('visibilitychange', onVisibilityChange)
 
@@ -416,7 +479,10 @@ onUnmounted(() => {
     if (earningsInterval) clearInterval(earningsInterval)
     if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId)
     if (arrivalToastTimer) clearTimeout(arrivalToastTimer)
+    if (cancelledToastTimer) clearTimeout(cancelledToastTimer)
     document.removeEventListener('visibilitychange', onVisibilityChange)
+    if (driverClientId.value) unsubscribe(`trips.${driverClientId.value}`)
+    if (driverId.value) unsubscribe(`driver.${driverId.value}`)
     MapService.destroy()
 })
 
@@ -581,6 +647,22 @@ const toggleSimulatorMode = () => {
       </div>
     </Transition>
 
+    <!-- ── CANCELLATION TOAST ──────────────────────────────────── -->
+    <Transition name="toast-drop">
+      <div
+        v-if="showCancelledToast"
+        class="absolute top-24 inset-x-4 z-40 flex items-center gap-4
+               bg-red-500 text-white rounded-2xl px-5 py-4
+               shadow-[0_8px_32px_rgba(239,68,68,0.5)] pointer-events-none"
+      >
+        <span class="text-2xl flex-shrink-0">🚫</span>
+        <div>
+          <p class="font-extrabold text-[15px] leading-tight">Viaje cancelado</p>
+          <p class="text-red-100 text-[13px] mt-0.5">El cliente canceló el pedido</p>
+        </div>
+      </div>
+    </Transition>
+
     <!-- ── LOADING OVERLAY ──────────────────────────────────── -->
     <Transition name="fade">
       <div v-if="mapLoading" class="absolute inset-0 z-50 bg-slate-900 flex flex-col items-center justify-center gap-4">
@@ -690,10 +772,10 @@ const toggleSimulatorMode = () => {
               <button
                 @click="acceptOrder(availableOrders[0])"
                 class="sheet-btn"
-                :class="canAcceptTrips ? 'sheet-btn--blue' : 'sheet-btn--disabled'"
-                :disabled="!canAcceptTrips"
+                :class="(canAcceptTrips && !isAccepting) ? 'sheet-btn--blue' : 'sheet-btn--disabled'"
+                :disabled="!canAcceptTrips || isAccepting"
               >
-                Aceptar Viaje
+                {{ isAccepting ? 'Aceptando...' : 'Aceptar Viaje' }}
               </button>
               <p class="text-center text-gray-400 text-[14px] mt-4">
                 <template v-if="availableOrders.length > 1">

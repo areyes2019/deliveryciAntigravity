@@ -8,6 +8,7 @@ use App\Models\DriverModel;
 use App\Models\OrderModel;
 use App\Models\OrderStatusLogModel;
 use App\Services\NotificationService;
+use App\Services\PusherService;
 use App\Services\WalletService;
 use App\Traits\ApiResponseTrait;
 
@@ -104,27 +105,50 @@ class DriverApiController extends BaseController
         }
 
         $db = \Config\Database::connect();
-        $db->transStart();
+        $db->transBegin();
 
-        // Update order
-        $this->orderModel->update($id, [
-            'driver_id' => $driver['id'],
-            'status'    => 'tomado'
-        ]);
+        try {
+            // Asignación atómica: la fila solo se toca si aún está en 'publicado'.
+            // MySQL garantiza que exactamente un UPDATE ganará cuando hay concurrencia.
+            $db->table('orders')
+                ->where('id', $id)
+                ->where('status', 'publicado')
+                ->update([
+                    'driver_id'  => $driver['id'],
+                    'status'     => 'tomado',
+                    'updated_at' => date('Y-m-d H:i:s'),
+                ]);
 
-        // Log status change
-        $statusLogModel = new OrderStatusLogModel();
-        $statusLogModel->insert([
-            'order_id'        => $id,
-            'previous_status' => 'publicado',
-            'new_status'      => 'tomado'
-        ]);
+            if ($db->affectedRows() !== 1) {
+                $db->transRollback();
+                return $this->respondError('Este viaje ya fue tomado por otro conductor.', [], 409);
+            }
 
-        $db->transComplete();
+            $statusLogModel = new OrderStatusLogModel();
+            $statusLogModel->insert([
+                'order_id'        => $id,
+                'previous_status' => 'publicado',
+                'new_status'      => 'tomado'
+            ]);
 
-        if ($db->transStatus() === false) {
-            return $this->respondError('Failed to accept trip.');
+            $db->transCommit();
+        } catch (\Throwable $e) {
+            $db->transRollback();
+            return $this->respondError('Error al aceptar el viaje.');
         }
+
+        // Notificar en tiempo real a los demás drivers de la misma flota.
+        // Se emite DESPUÉS del commit para garantizar consistencia en DB.
+        // Si Pusher falla, el viaje igual queda asignado; el polling de fallback lo sincronizará.
+        PusherService::trigger(
+            'trips.' . $order['client_id'],
+            'trip-taken',
+            [
+                'trip_id'   => (int) $id,
+                'driver_id' => $driver['id'],
+                'status'    => 'tomado',
+            ]
+        );
 
         // Notificar al receptor que el conductor fue asignado
         if (!empty($order['receiver_phone'])) {
