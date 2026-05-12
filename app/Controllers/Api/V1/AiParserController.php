@@ -47,13 +47,13 @@ class AiParserController extends BaseController
     }
 
     /**
-     * Procesa un mensaje de texto y devuelve datos estructurados.
+     * Procesa un mensaje de WhatsApp y devuelve datos estructurados de envío.
      *
      * Endpoint: POST /api/ia/procesar-mensaje
      *
      * Request Body (JSON):
      * {
-     *   "mensaje": "Necesito un envio de mi ubicacion a la calle emeteria valencia 56 col centro a las 5:00"
+     *   "mensaje": "Buenas tardes, necesito un envio. Recojo en Av Benito Juarez 123 Col Centro Celaya. Entrego en Calle Hidalgo 456 Col San Miguel. A nombre de María García. Tel 461-123-45-67. Es un pastel de cumpleaños."
      * }
      *
      * Respuesta Exitosa (200):
@@ -61,9 +61,13 @@ class AiParserController extends BaseController
      *   "status": true,
      *   "message": "Mensaje interpretado correctamente.",
      *   "data": {
-     *     "pickup_address": "Ubicación actual del cliente",
-     *     "delivery_address": "Calle Emeteria Valencia 56, Col Centro",
-     *     "scheduled_time": "17:00:00",
+     *     "pickup_address": "Av Benito Juarez 123, Col Centro, Celaya",
+     *     "delivery_address": "Calle Hidalgo 456, Col San Miguel",
+     *     "receiver_name": "María García",
+     *     "receiver_phone": "4611234567",
+     *     "reference_code": "",
+     *     "description": "Pastel de cumpleaños",
+     *     "scheduled_time": null,
      *     "notes": ""
      *   }
      * }
@@ -122,13 +126,24 @@ class AiParserController extends BaseController
         }
 
         // --------------------------------------------------------------------
-        // 3. DELEGAR AL SERVICE
+        // 3. EXTRAER CONTEXTO CONVERSACIONAL (OPCIONAL)
+        // --------------------------------------------------------------------
+        // Si el frontend envía contexto (historial de mensajes anteriores)
+        // y datos_actuales (datos ya extraídos previamente), los pasamos
+        // al servicio para que la IA pueda actualizar incrementalmente.
+        // --------------------------------------------------------------------
+
+        $contexto = $input['contexto'] ?? [];
+        $datosActuales = $input['datos_actuales'] ?? null;
+
+        // --------------------------------------------------------------------
+        // 4. DELEGAR AL SERVICE
         // --------------------------------------------------------------------
         // El controlador NO debe contener lógica de negocio. Solo llamamos
         // al Service y devolvemos lo que él nos dé.
         // --------------------------------------------------------------------
 
-        $result = $this->aiParserService->parse($mensaje);
+        $result = $this->aiParserService->parse($mensaje, $contexto, $datosActuales);
 
         // --------------------------------------------------------------------
         // 4. DEVOLVER RESPUESTA
