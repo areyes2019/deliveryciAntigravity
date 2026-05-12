@@ -4,6 +4,7 @@ import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
+import CreateOrderManualModal from '../components/CreateOrderManualModal.vue'
 
 const buildDriverMapIcon = (highlight = false) => {
   const size = highlight ? { width: 70, height: 47 } : { width: 55, height: 37 }
@@ -63,6 +64,7 @@ const selectedOrder = ref(null)
 const routeInfo = ref(null)
 const viewMode = ref('map') // 'map' or 'stats' for client_admin
 const showCreateOrder = ref(false)
+const showCreateOrderManual = ref(false)
 const clientZones = ref([])
 
 const hasZones = computed(() => clientZones.value.length > 0)
@@ -584,7 +586,15 @@ const activeDrivers = computed(() => {
                         :disabled="!hasZones"
                         :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
                         @click="hasZones && (showCreateOrder = true)">
-                        <span class="icon">🚀</span> Generar Viaje
+                        <span class="icon">🤖</span> IA
+                    </button>
+                    <button
+                        class="map-pill generate-manual"
+                        :class="{ disabled: !hasZones }"
+                        :disabled="!hasZones"
+                        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
+                        @click="hasZones && (showCreateOrderManual = true)">
+                        <span class="icon">📝</span> Manual
                     </button>
                     <div v-if="!hasZones" class="map-pill warning-pill">
                         ⚠️ Sin zonas configuradas
@@ -703,7 +713,6 @@ const activeDrivers = computed(() => {
             </div>
         </div>
     </div>
-
     <!-- Toast Notifications -->
     <div class="toast-container">
         <transition-group name="toast">
@@ -713,10 +722,17 @@ const activeDrivers = computed(() => {
         </transition-group>
     </div>
 
-    <!-- Modal Generar Viaje -->
+    <!-- Modal Generar Viaje (IA) -->
     <CreateOrderModal
         v-if="showCreateOrder"
         @close="showCreateOrder = false"
+        @created="onOrderCreated"
+    />
+
+    <!-- Modal Generar Viaje (Manual) -->
+    <CreateOrderManualModal
+        v-if="showCreateOrderManual"
+        @close="showCreateOrderManual = false"
         @created="onOrderCreated"
     />
   </div>
@@ -796,6 +812,13 @@ const activeDrivers = computed(() => {
 }
 .map-pill.generate:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
 .map-pill.generate.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
+.map-pill.generate-manual {
+    background: linear-gradient(135deg, #059669, #10B981);
+    color: white;
+    box-shadow: 0 4px 12px rgba(5, 150, 105, 0.35);
+}
+.map-pill.generate-manual:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45); }
+.map-pill.generate-manual.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
 .warning-pill { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; font-size: 0.8rem; cursor: default; }
 
 /* Shared Sidebars inside Map Container */
