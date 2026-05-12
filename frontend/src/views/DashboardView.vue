@@ -521,7 +521,7 @@ const activeDrivers = computed(() => {
                         <span class="badge scheduled">{{ scheduledOrders.length }}</span>
                     </div>
                     <div class="sidebar-list scrollable">
-                        <div v-for="order in scheduledOrders" :key="order.id" class="order-card scheduled-card">
+                        <div v-for="order in scheduledOrders" :key="order.id" class="order-card scheduled-card" @click="selectOrder(order)">
                             <div class="order-header">
                                 <span class="id">📅 #{{ order.id }}</span>
                                 <span class="scheduled-time">
