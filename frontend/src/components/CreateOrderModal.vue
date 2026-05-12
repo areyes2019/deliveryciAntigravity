@@ -102,7 +102,22 @@ const startVoiceRecognition = () => {
     } else if (event.error === 'audio-capture') {
       voiceError.value = 'No se encontró micrófono. Conecta uno e intenta de nuevo.'
     } else if (event.error === 'network') {
-      voiceError.value = 'Error de conexión. El reconocimiento de voz necesita Internet. Verifica tu conexión y vuelve a intentar.'
+      // En HTTPS, el error network puede ocurrir si:
+      // 1. La conexión a servidores Google Speech es intermitente
+      // 2. El sitio tiene contenido mixto (HTTP/HTTPS)
+      // 3. Hay un firewall o proxy bloqueando
+      // En lugar de mostrar error, intentamos un segundo intento automático
+      console.log('[Voz] Error network, reintentando una vez...')
+      voiceError.value = 'Reintentando conexión de voz...'
+      setTimeout(() => {
+        voiceState.value = 'idle'
+        voiceError.value = ''
+        // Reintentar automáticamente una vez
+        if (voiceState.value === 'idle') {
+          startVoiceRecognition()
+        }
+      }, 1500)
+      return // No ejecutar el setTimeout de abajo
     } else if (event.error === 'aborted') {
       voiceError.value = 'Grabación cancelada. Intenta de nuevo.'
     } else if (event.error === 'language-not-supported') {
