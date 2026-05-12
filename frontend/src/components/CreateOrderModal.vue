@@ -106,18 +106,10 @@ const startVoiceRecognition = () => {
       // 1. La conexión a servidores Google Speech es intermitente
       // 2. El sitio tiene contenido mixto (HTTP/HTTPS)
       // 3. Hay un firewall o proxy bloqueando
-      // En lugar de mostrar error, intentamos un segundo intento automático
-      console.log('[Voz] Error network, reintentando una vez...')
-      voiceError.value = 'Reintentando conexión de voz...'
-      setTimeout(() => {
-        voiceState.value = 'idle'
-        voiceError.value = ''
-        // Reintentar automáticamente una vez
-        if (voiceState.value === 'idle') {
-          startVoiceRecognition()
-        }
-      }, 1500)
-      return // No ejecutar el setTimeout de abajo
+      // NO reintentar automaticamente para evitar bucles infinitos.
+      // El usuario puede presionar el boton de voz nuevamente.
+      console.log('[Voz] Error network. El navegador no pudo conectar con el servicio de voz de Google.')
+      voiceError.value = 'El servicio de voz de Google no está disponible en este momento. Escribe el mensaje manualmente o intenta más tarde.'
     } else if (event.error === 'aborted') {
       voiceError.value = 'Grabación cancelada. Intenta de nuevo.'
     } else if (event.error === 'language-not-supported') {
