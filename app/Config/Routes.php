@@ -7,6 +7,9 @@ use CodeIgniter\Router\RouteCollection;
  */
 $routes->get('/', 'Home::index');
 
+// ─────────────────────────────────────────────────────────────────────────────
+// API v1 — todas las rutas protegidas con corsFilter
+// ─────────────────────────────────────────────────────────────────────────────
 $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => 'corsFilter'], static function($routes) {
     $routes->post('auth/login', 'Auth::login');
     $routes->get('auth/me', 'Auth::me', ['filter' => 'jwt']);
@@ -39,7 +42,6 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
     $routes->get('drivers', 'DriverController::index', ['filter' => 'jwt:client_admin']);
     $routes->post('drivers', 'DriverController::create', ['filter' => 'jwt:client_admin']);
     $routes->put('drivers/(:num)', 'DriverController::update/$1', ['filter' => 'jwt:client_admin']);
-    $routes->delete('drivers/(:num)', 'DriverController::delete/$1', ['filter' => 'jwt:client_admin']);
 
     // Driver Billing Config
     $routes->get('driver-billing', 'DriverBillingConfigController::getConfig', ['filter' => 'jwt:client_admin']);
@@ -67,8 +69,6 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
         $routes->put('orders/(:num)/cancel', 'OrderController::cancelByDriver/$1');
     });
 
-$routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
-
     // TEMPORAL — diagnóstico SMS, eliminar después
     $routes->get('sms-diag', 'SmsTestController::diagnose');
 });
@@ -83,6 +83,12 @@ $routes->options('(:any)', 'Home::index'); // Let CorsFilter intercept
 // ─────────────────────────────────────────────────────────────────────────────
 $routes->post('api/ia/procesar-mensaje', 'Api\V1\AiParserController::procesarMensaje', ['filter' => 'corsFilter']);
 
+// ─────────────────────────────────────────────────────────────────────────────
+// Ruta OPTIONS global para preflight CORS
+// ─────────────────────────────────────────────────────────────────────────────
+// Captura cualquier solicitud OPTIONS a cualquier ruta.
+// CorsFilter se encarga de responder con 204 y los headers CORS adecuados.
+// Esta ruta debe estar FUERA del grupo api/v1 para que coincida correctamente.
 $routes->options('(:any)', 'Home::index');
 
 // SPA fallback: sirve el index.html de Vue para todas las rutas frontend

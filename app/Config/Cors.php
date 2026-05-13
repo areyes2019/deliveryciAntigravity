@@ -27,9 +27,13 @@ class Cors extends BaseConfig
     public array $default = [
         'allowedOrigins' => [
             'http://localhost:5173',
+            'http://localhost:5174',
+            'http://127.0.0.1:5173',
+            'http://127.0.0.1:5174',
             'http://localhost:3000',
             'http://delivery.test',
             'https://delivery.test',
+            'http://panda_expres.test',
             'https://unalliterative-semimagnetic-tamiko.ngrok-free.dev',
             // 'https://tu-dominio-produccion.com',  ← agrega aquí tu dominio real
         ],
@@ -39,7 +43,7 @@ class Cors extends BaseConfig
             'https://[\w-]+\.ngrok\.io',
         ],
 
-        'supportsCredentials' => false,
+        'supportsCredentials' => true,
 
         'allowedHeaders' => [
             'Origin',
@@ -50,7 +54,11 @@ class Cors extends BaseConfig
             'ngrok-skip-browser-warning',
         ],
 
-        'exposedHeaders' => [],
+        'exposedHeaders' => [
+            'Content-Type',
+            'Authorization',
+            'X-Requested-With',
+        ],
 
         'allowedMethods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
 

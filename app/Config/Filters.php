@@ -53,14 +53,14 @@ class Filters extends BaseFilters
      */
     public array $required = [
         'before' => [
-            'cors',       // CORS must run before forcehttps (OPTIONS would get redirected otherwise)
-            'forcehttps', // Force Global Secure Requests
-            'pagecache',  // Web Page Caching
+            'cors',       // CORS nativo de CI4 — maneja preflight OPTIONS globalmente
+            // 'forcehttps',
+            // 'pagecache',
         ],
         'after' => [
-            'pagecache',   // Web Page Caching
-            'performance', // Performance Metrics
-            'toolbar',     // Debug Toolbar
+            // 'pagecache',
+            // 'performance',
+            // 'toolbar',
         ],
     ];
 

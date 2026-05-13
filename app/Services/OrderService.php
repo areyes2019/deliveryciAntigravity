@@ -138,9 +138,25 @@ class OrderService
 
         // Scheduled orders start as 'pendiente' until their time arrives.
         // Credits are deducted immediately to reserve funds.
-        $scheduledAt    = !empty($data['scheduled_at']) ? $data['scheduled_at'] : null;
-        $isScheduled    = $scheduledAt && strtotime($scheduledAt) > time();
-        $initialStatus  = $isScheduled ? 'pendiente' : 'publicado';
+        // IMPORTANTE: scheduled_at NUNCA debe ser NULL — siempre se guarda una fecha/hora válida.
+        // IMPORTANTE: strtotime() interpreta strings sin timezone como UTC.
+        //            Como el servidor está en America/Mexico_City, usamos date_create
+        //            con la zona horaria local para comparar correctamente.
+        $scheduledAt = !empty($data['scheduled_at']) ? $data['scheduled_at'] : null;
+        $tz          = new \DateTimeZone('America/Mexico_City');
+        $nowDt       = date_create('now', $tz);
+
+        if ($scheduledAt) {
+            // El frontend envió una fecha programada (formato local Y-m-d H:i:s)
+            $scheduledDt = date_create($scheduledAt, $tz);
+            $isScheduled = $scheduledDt && $scheduledDt > $nowDt;
+        } else {
+            // Modo "Lo antes posible" — usar hora local actual
+            $scheduledAt = $nowDt->format('Y-m-d H:i:s');
+            $isScheduled = false;
+        }
+
+        $initialStatus = $isScheduled ? 'pendiente' : 'publicado';
 
         $this->db->transStart();
 
@@ -233,8 +249,8 @@ class OrderService
             return ['status' => false, 'message' => 'Unauthorized to cancel this order'];
         }
 
-        if (!in_array($order['status'], ['publicado', 'tomado'])) {
-            return ['status' => false, 'message' => 'Solo se pueden cancelar órdenes en estado publicado o tomado'];
+        if (!in_array($order['status'], ['pendiente', 'publicado', 'tomado', 'arribado'])) {
+            return ['status' => false, 'message' => 'Solo se pueden cancelar órdenes en estado pendiente, publicado, tomado o arribado'];
         }
 
         $this->db->transStart();
@@ -311,10 +327,15 @@ class OrderService
     /**
      * Publica las órdenes programadas cuya hora ya llegó.
      * Se llama en cada fetch de órdenes — no requiere cron.
+     * 
+     * IMPORTANTE: scheduled_at se almacena en hora local (America/Mexico_City).
+     *            date('Y-m-d H:i:s') devuelve UTC si el servidor está en UTC.
+     *            Por eso usamos date_create('now', $tz) para obtener la hora local.
      */
     public function publishDueOrders(): void
     {
-        $now = date('Y-m-d H:i:s');
+        $tz  = new \DateTimeZone('America/Mexico_City');
+        $now = date_create('now', $tz)->format('Y-m-d H:i:s');
 
         $due = $this->orderModel
             ->where('status', 'pendiente')

@@ -44,10 +44,7 @@ class DriverApiController extends BaseController
         $orders = $this->orderModel
             ->where('status', 'publicado')
             ->where('client_id', $driver['client_id'])
-            ->groupStart()
-                ->where('scheduled_at IS NULL')
-                ->orWhere('scheduled_at <=', date('Y-m-d H:i:s'))
-            ->groupEnd()
+            ->where('scheduled_at <=', date_create('now', new \DateTimeZone('America/Mexico_City'))->format('Y-m-d H:i:s'))
             ->findAll();
 
         return $this->respondSuccess('Available trips retrieved.', $orders);

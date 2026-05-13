@@ -75,6 +75,13 @@ class OrderController extends BaseController
             'payment_type'    => 'required|in_list[prepaid,cash_on_delivery,cash_full]'
         ];
 
+        // scheduled_at: si se envía debe tener formato válido.
+        // Si no se envía, OrderService::createOrder lo asigna con date('Y-m-d H:i:s') automáticamente.
+        // NUNCA debe quedar NULL en la base de datos.
+        if (!empty($data['scheduled_at'])) {
+            $rules['scheduled_at'] = 'valid_date';
+        }
+
         // product_amount is required and must be > 0 only for cash_full
         if (($data['payment_type'] ?? '') === 'cash_full') {
             $rules['product_amount'] = 'required|decimal|greater_than[0]';
