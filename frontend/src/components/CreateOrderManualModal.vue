@@ -25,20 +25,47 @@ const outOfZoneError = ref('')
 const submitting = ref(false)
 const clientZones = ref([])
 
+// ─── Helper: obtener fecha local YYYY-MM-DD ──────────────────────────────────
+const getLocalDateStr = (date) => {
+  const y = date.getFullYear()
+  const m = String(date.getMonth() + 1).padStart(2, '0')
+  const d = String(date.getDate()).padStart(2, '0')
+  return `${y}-${m}-${d}`
+}
+
 // ─── Scheduling ───────────────────────────────────────────────────────────────
+// Modo: 'asap' (Lo antes posible) | 'scheduled' (Programar envío)
+const scheduleMode = ref('asap')
+
 const scheduledDate = ref(null)
 const scheduledHour = ref('12')
 const scheduledMinute = ref('00')
 const scheduledAmpm = ref('PM')
 
+const todayDate = computed(() => {
+  return getLocalDateStr(new Date())
+})
 const tomorrowDate = computed(() => {
   const d = new Date(); d.setDate(d.getDate() + 1)
-  return d.toISOString().split('T')[0]
+  return getLocalDateStr(d)
 })
 const afterTomorrowDate = computed(() => {
   const d = new Date(); d.setDate(d.getDate() + 2)
-  return d.toISOString().split('T')[0]
+  return getLocalDateStr(d)
 })
+
+const dayOptions = computed(() => {
+  const now = new Date()
+  const today = getLocalDateStr(now)
+  const tomorrow = new Date(now); tomorrow.setDate(tomorrow.getDate() + 1)
+  const afterTomorrow = new Date(now); afterTomorrow.setDate(afterTomorrow.getDate() + 2)
+  return [
+    { label: 'Hoy', value: today },
+    { label: 'Mañana', value: getLocalDateStr(tomorrow) },
+    { label: 'Pasado mañana', value: getLocalDateStr(afterTomorrow) }
+  ]
+})
+
 const formattedScheduleDate = computed(() => {
   if (!scheduledDate.value) return ''
   const [y, m, day] = scheduledDate.value.split('-')
@@ -46,10 +73,58 @@ const formattedScheduleDate = computed(() => {
   return `${day} ${names[parseInt(m) - 1]}`
 })
 
+// Validación: si es HOY, la hora NO debe haber pasado
+const scheduleTimeError = computed(() => {
+  if (!scheduledDate.value || scheduleMode.value !== 'scheduled') return ''
+
+  const now = new Date()
+  const todayStr = getLocalDateStr(now)
+
+  // Solo validar si es HOY
+  if (scheduledDate.value !== todayStr) return ''
+
+  // Construir la hora seleccionada
+  let h = parseInt(scheduledHour.value)
+  if (scheduledAmpm.value === 'PM' && h !== 12) h += 12
+  if (scheduledAmpm.value === 'AM' && h === 12) h = 0
+  const m = parseInt(scheduledMinute.value)
+
+  const selectedTime = new Date(now.getFullYear(), now.getMonth(), now.getDate(), h, m, 0)
+  
+  if (selectedTime <= now) {
+    return 'La hora seleccionada ya pasó'
+  }
+  return ''
+})
+
+const canSchedule = computed(() => {
+  if (scheduleMode.value === 'asap') return true
+  return scheduledDate.value && !scheduleTimeError.value
+})
+
 const setScheduleDate = (which) => {
-  scheduledDate.value = which === 'tomorrow' ? tomorrowDate.value : afterTomorrowDate.value
+  if (which === 'today') {
+    scheduledDate.value = todayDate.value
+  } else if (which === 'tomorrow') {
+    scheduledDate.value = tomorrowDate.value
+  } else if (which === 'after_tomorrow') {
+    scheduledDate.value = afterTomorrowDate.value
+  }
 }
-const clearSchedule = () => { scheduledDate.value = null }
+
+const enableScheduling = () => {
+  scheduleMode.value = 'scheduled'
+  // Por defecto seleccionar "Mañana" para evitar conflicto con hora actual
+  scheduledDate.value = tomorrowDate.value
+}
+
+const clearSchedule = () => {
+  scheduleMode.value = 'asap'
+  scheduledDate.value = null
+  scheduledHour.value = '12'
+  scheduledMinute.value = '00'
+  scheduledAmpm.value = 'PM'
+}
 
 let mapInstance = null
 let pickupMarker = null
@@ -198,7 +273,15 @@ const saveOrder = async () => {
     if (scheduledAmpm.value === 'AM' && h === 12) h = 0
     form.value.scheduled_at = `${scheduledDate.value} ${String(h).padStart(2, '0')}:${scheduledMinute.value}:00`
   } else {
-    form.value.scheduled_at = null
+    // "HOY MISMO, TAN PRONTO COMO SEA POSIBLE" — NUNCA NULL
+    const now = new Date()
+    const y = now.getFullYear()
+    const m = String(now.getMonth() + 1).padStart(2, '0')
+    const d = String(now.getDate()).padStart(2, '0')
+    const hh = String(now.getHours()).padStart(2, '0')
+    const mm = String(now.getMinutes()).padStart(2, '0')
+    const ss = String(now.getSeconds()).padStart(2, '0')
+    form.value.scheduled_at = `${y}-${m}-${d} ${hh}:${mm}:${ss}`
   }
 
   submitting.value = true
@@ -375,27 +458,30 @@ onMounted(async () => {
 <template>
   <Teleport to="body">
     <div class="modal-overlay" @click.self="$emit('close')">
-      <div class="modal-content">
+      <div class="modal-content modal-content--manual">
 
         <div class="modal-header">
           <div class="modal-title-group">
-            <span class="modal-icon">📝</span>
+            <span class="modal-icon" aria-hidden="true">📝</span>
             <div>
-              <h2>Generar Envío Manual</h2>
-              <p>Completa los datos para publicar un nuevo envío.</p>
+              <p class="modal-kicker">Nuevo envío</p>
+              <h2>Formulario manual</h2>
+              <p class="modal-subtitle">Completa los datos para publicar un envío en tu zona.</p>
             </div>
           </div>
-          <button @click="$emit('close')" class="close-btn">&times;</button>
+          <button type="button" @click="$emit('close')" class="close-btn" aria-label="Cerrar">&times;</button>
         </div>
 
         <form @submit.prevent="saveOrder" class="modal-form">
           <div class="modal-body">
 
           <div class="balance-pill" :class="{ 'insufficient': !canAffordOrder }">
-            <span class="pill-label">{{ canAffordOrder ? '✅ Saldo disponible' : '⚠️ Saldo insuficiente' }}</span>
-            <span class="pill-value">{{ userBalance }} viajes prepagados disponibles</span>
+            <span class="pill-label">{{ canAffordOrder ? 'Saldo disponible' : 'Saldo insuficiente' }}</span>
+            <span class="pill-value">{{ userBalance }} viajes prepagados</span>
           </div>
 
+          <section class="manual-section" aria-labelledby="manual-address-heading">
+            <h3 id="manual-address-heading" class="manual-section__title">Origen, destino y receptor</h3>
           <div class="form-row">
             <div class="form-group">
               <label>📍 Direccion de Recogida</label>
@@ -454,10 +540,13 @@ onMounted(async () => {
             </div>
           </div>
 
-          <div class="form-group map-preview-wrapper" style="margin-top: 0.5rem; margin-bottom: 0.5rem;">
-            <div id="modal-map-manual" style="width: 100%; height: 260px; border-radius: 12px; border: 1px solid #E5E7EB; overflow: hidden;"></div>
+          <div class="form-group map-preview-wrapper">
+            <div id="modal-map-manual" class="modal-map-preview"></div>
           </div>
+          </section>
 
+          <section class="manual-section" aria-labelledby="manual-package-heading">
+            <h3 id="manual-package-heading" class="manual-section__title">Detalle del paquete</h3>
           <div class="form-group">
             <label>📝 Descripcion del Paquete</label>
             <textarea
@@ -465,53 +554,80 @@ onMounted(async () => {
               placeholder="Ej. 2 cajas de pizza, fragil. Manejar con cuidado."
             ></textarea>
           </div>
+          </section>
 
+          <section class="manual-section" aria-labelledby="manual-schedule-heading">
+            <h3 id="manual-schedule-heading" class="manual-section__title">Programación</h3>
           <div class="form-group">
-            <label>📅 Programar envio <span class="optional-tag">opcional</span></label>
-            <div class="schedule-date-row">
-              <button
-                type="button"
-                class="date-chip"
-                :class="{ active: scheduledDate === tomorrowDate }"
-                @click="setScheduleDate('tomorrow')"
-              >Manana</button>
-              <button
-                type="button"
-                class="date-chip"
-                :class="{ active: scheduledDate === afterTomorrowDate }"
-                @click="setScheduleDate('after_tomorrow')"
-              >Pasado manana</button>
-              <button
-                v-if="scheduledDate"
-                type="button"
-                class="date-chip clear"
-                @click="clearSchedule"
-              >✕ Quitar</button>
+            <label>📅 Programar envio</label>
+            
+            <!-- Radio toggle: Lo antes posible vs Programar -->
+            <div class="schedule-mode-toggle">
+              <label class="mode-radio" :class="{ active: scheduleMode === 'asap' }">
+                <input type="radio" v-model="scheduleMode" value="asap" />
+                <span class="mode-radio-dot"></span>
+                <span class="mode-radio-label">Lo antes posible</span>
+              </label>
+              <label class="mode-radio" :class="{ active: scheduleMode === 'scheduled' }">
+                <input type="radio" v-model="scheduleMode" value="scheduled" />
+                <span class="mode-radio-dot"></span>
+                <span class="mode-radio-label">Programar envío</span>
+              </label>
             </div>
 
+            <!-- Scheduling UI (only visible when "Programar envío" is selected) -->
             <transition name="fade-down">
-              <div v-if="scheduledDate" class="time-picker-row">
-                <span class="schedule-date-label">{{ formattedScheduleDate }}</span>
-                <div class="time-selects">
-                  <select v-model="scheduledHour" class="time-select">
-                    <option v-for="h in 12" :key="h" :value="String(h).padStart(2,'0')">{{ String(h).padStart(2,'0') }}</option>
-                  </select>
-                  <span class="time-colon">:</span>
-                  <select v-model="scheduledMinute" class="time-select">
-                    <option value="00">00</option>
-                    <option value="15">15</option>
-                    <option value="30">30</option>
-                    <option value="45">45</option>
-                  </select>
-                  <div class="ampm-toggle">
-                    <button type="button" :class="{ active: scheduledAmpm === 'AM' }" @click="scheduledAmpm = 'AM'">AM</button>
-                    <button type="button" :class="{ active: scheduledAmpm === 'PM' }" @click="scheduledAmpm = 'PM'">PM</button>
+              <div v-if="scheduleMode === 'scheduled'" class="schedule-panel">
+                <!-- Day selector -->
+                <div class="schedule-day-row">
+                  <button
+                    v-for="opt in dayOptions"
+                    :key="opt.value"
+                    type="button"
+                    class="day-chip"
+                    :class="{ active: scheduledDate === opt.value }"
+                    @click="setScheduleDate(opt.label === 'Hoy' ? 'today' : opt.label === 'Mañana' ? 'tomorrow' : 'after_tomorrow')"
+                  >{{ opt.label }}</button>
+                </div>
+
+                <!-- Time picker (only visible when a day is selected) -->
+                <div v-if="scheduledDate" class="time-picker-row">
+                  <span class="schedule-date-label">{{ formattedScheduleDate }}</span>
+                  <div class="time-selects">
+                    <select v-model="scheduledHour" class="time-select">
+                      <option v-for="h in 12" :key="h" :value="String(h).padStart(2,'0')">{{ h }}</option>
+                    </select>
+                    <span class="time-colon">:</span>
+                    <select v-model="scheduledMinute" class="time-select">
+                      <option value="00">00</option>
+                      <option value="15">15</option>
+                      <option value="30">30</option>
+                      <option value="45">45</option>
+                    </select>
+                    <div class="ampm-toggle">
+                      <button type="button" :class="{ active: scheduledAmpm === 'AM' }" @click="scheduledAmpm = 'AM'">AM</button>
+                      <button type="button" :class="{ active: scheduledAmpm === 'PM' }" @click="scheduledAmpm = 'PM'">PM</button>
+                    </div>
+                  </div>
+                  <!-- Error message if time already passed -->
+                  <div v-if="scheduleTimeError" class="schedule-error">
+                    ⚠️ {{ scheduleTimeError }}
                   </div>
                 </div>
+
+                <!-- Quitar button -->
+                <button
+                  type="button"
+                  class="btn-quitar"
+                  @click="clearSchedule"
+                >✕ Quitar</button>
               </div>
             </transition>
           </div>
+          </section>
 
+          <section class="manual-section" aria-labelledby="manual-payment-heading">
+            <h3 id="manual-payment-heading" class="manual-section__title">Pago y resumen</h3>
           <div class="form-group">
             <label>💳 Quien paga el envio?</label>
             <div class="payment-cards">
@@ -548,7 +664,7 @@ onMounted(async () => {
                   placeholder="0.00"
                   required
                 />
-                <span class="coord-badge" style="background:#D1FAE5;color:#065F46">MXN</span>
+                <span class="coord-badge coord-badge--currency">MXN</span>
               </div>
             </div>
           </transition>
@@ -583,6 +699,7 @@ onMounted(async () => {
               </div>
             </template>
           </div>
+          </section>
 
           </div>
 
@@ -590,7 +707,7 @@ onMounted(async () => {
             <button type="button" @click="$emit('close')" class="btn-cancel">Cancelar</button>
             <button type="submit" class="btn-publish" :disabled="!canAffordOrder || submitting || !!outOfZoneError">
               <span v-if="submitting">Publicando...</span>
-              <span v-else>🚀 Publicar Viaje</span>
+              <span v-else>Publicar viaje</span>
             </button>
           </div>
         </form>
@@ -621,37 +738,112 @@ onMounted(async () => {
   display: flex; flex-direction: column;
   max-height: 95dvh;
 }
+
+.modal-content--manual {
+  border: 1px solid rgba(226, 232, 240, 0.95);
+  box-shadow:
+    0 0 0 1px rgba(255, 255, 255, 0.6) inset,
+    0 28px 55px -18px rgba(15, 23, 42, 0.35);
+}
 @keyframes slideUp { from { transform: translateY(30px); opacity: 0; } to { transform: translateY(0); opacity: 1; } }
 
 .modal-header {
-  display: flex; justify-content: space-between; align-items: center;
-  padding: 1.5rem 2rem;
-  background: linear-gradient(135deg, #059669 0%, #10B981 100%);
+  display: flex; justify-content: space-between; align-items: flex-start;
+  padding: 1.35rem 1.75rem 1.25rem;
+  background: linear-gradient(135deg, #0f766e 0%, #059669 42%, #10b981 100%);
   color: white;
+  position: relative;
+  overflow: hidden;
 }
-.modal-title-group { display: flex; align-items: center; gap: 1rem; }
-.modal-icon { font-size: 2rem; }
-.modal-header h2 { font-size: 1.2rem; font-weight: 700; margin: 0; }
-.modal-header p { font-size: 0.8rem; opacity: 0.8; margin: 0; }
+
+.modal-header::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: radial-gradient(120% 80% at 100% 0%, rgba(255,255,255,0.18) 0%, transparent 55%);
+  pointer-events: none;
+}
+
+.modal-title-group { display: flex; align-items: flex-start; gap: 1rem; position: relative; z-index: 1; }
+.modal-icon { font-size: 2rem; line-height: 1; filter: drop-shadow(0 2px 4px rgba(0,0,0,0.15)); }
+
+.modal-kicker {
+  margin: 0 0 0.15rem;
+  font-size: 0.68rem;
+  font-weight: 800;
+  letter-spacing: 0.12em;
+  text-transform: uppercase;
+  opacity: 0.88;
+}
+
+.modal-header h2 { font-size: 1.35rem; font-weight: 800; margin: 0 0 0.35rem; letter-spacing: -0.02em; }
+
+.modal-subtitle {
+  font-size: 0.82rem;
+  opacity: 0.88;
+  margin: 0;
+  max-width: 36ch;
+  line-height: 1.45;
+}
 
 .close-btn {
-  background: rgba(255,255,255,0.2); border: none; color: white;
-  width: 32px; height: 32px; border-radius: 50%; font-size: 1.2rem;
+  background: rgba(255,255,255,0.18); border: none; color: white;
+  width: 36px; height: 36px; border-radius: 12px; font-size: 1.2rem;
   cursor: pointer; display: flex; align-items: center; justify-content: center;
-  transition: background 0.2s;
+  transition: background 0.2s, transform 0.2s;
+  position: relative;
+  z-index: 1;
+  flex-shrink: 0;
 }
-.close-btn:hover { background: rgba(255,255,255,0.35); }
+.close-btn:hover { background: rgba(255,255,255,0.32); transform: scale(1.04); }
 
 .modal-form { display: flex; flex-direction: column; flex: 1; min-height: 0; }
-.modal-body { padding: 1.75rem 2rem; display: flex; flex-direction: column; gap: 1.1rem; overflow-y: auto; flex: 1; }
+.modal-body { padding: 1.5rem 1.75rem; display: flex; flex-direction: column; gap: 1.25rem; overflow-y: auto; flex: 1; background: linear-gradient(180deg, #f8fafc 0%, #fff 120px); }
+
+.manual-section {
+  display: flex;
+  flex-direction: column;
+  gap: 0.85rem;
+  padding: 1rem 1rem 1.05rem;
+  border-radius: 14px;
+  border: 1px solid #e8ecf4;
+  background: #fff;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
+}
+
+.manual-section__title {
+  margin: 0;
+  font-size: 0.72rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #64748b;
+  padding-bottom: 0.35rem;
+  border-bottom: 1px solid #f1f5f9;
+}
+
+.map-preview-wrapper {
+  margin-top: 0.25rem;
+  margin-bottom: 0;
+}
+
+.modal-map-preview {
+  width: 100%;
+  height: 260px;
+  border-radius: 12px;
+  border: 1px solid #e2e8f0;
+  overflow: hidden;
+  box-shadow: 0 8px 24px -16px rgba(15, 23, 42, 0.25);
+}
 
 .balance-pill {
   display: flex; justify-content: space-between; align-items: center;
-  padding: 0.75rem 1rem; border-radius: 10px;
-  background: #F0FDF4; border: 1px solid #86EFAC;
+  padding: 0.8rem 1rem; border-radius: 12px;
+  background: linear-gradient(135deg, #ecfdf5 0%, #f0fdf4 100%);
+  border: 1px solid #86efac;
   font-size: 0.85rem;
 }
-.balance-pill.insufficient { background: #FFF7ED; border-color: #FED7AA; }
+.balance-pill.insufficient { background: linear-gradient(135deg, #fff7ed 0%, #fffbeb 100%); border-color: #fed7aa; }
 .pill-label { font-weight: 600; }
 .pill-value { color: #6B7280; }
 
@@ -678,6 +870,11 @@ onMounted(async () => {
   padding: 0.2rem 0.5rem; border-radius: 6px; pointer-events: none;
 }
 
+.coord-badge--currency {
+  background: #d1fae5;
+  color: #065f46;
+}
+
 .form-group textarea, .form-group select {
   width: 100%; padding: 0.7rem 0.9rem;
   border: 1.5px solid #E5E7EB; border-radius: 10px;
@@ -691,10 +888,14 @@ onMounted(async () => {
 .form-group textarea { height: 80px; resize: none; }
 
 .order-summary {
-  background: #F9FAFB; border: 1px dashed #D1D5DB;
-  border-radius: 10px; padding: 1rem;
-  display: flex; flex-direction: column; gap: 0.5rem;
-  margin-top: 0.5rem;
+  background: linear-gradient(180deg, #f8fafc 0%, #f1f5f9 100%);
+  border: 1px solid #e2e8f0;
+  border-radius: 12px;
+  padding: 1rem 1.05rem;
+  display: flex;
+  flex-direction: column;
+  gap: 0.55rem;
+  margin-top: 0.25rem;
 }
 .summary-row { display: flex; justify-content: space-between; align-items: center; font-size: 0.9rem; }
 .summary-meta { display: flex; align-items: center; gap: 0.4rem; font-size: 0.82rem; color: #6B7280; font-weight: 500; }
@@ -725,25 +926,140 @@ onMounted(async () => {
 .fade-down-enter-active, .fade-down-leave-active { transition: all 0.25s ease; }
 .fade-down-enter-from, .fade-down-leave-to { opacity: 0; transform: translateY(-8px); }
 
-.optional-tag {
-  font-weight: 400; font-size: 0.75rem; color: #9CA3AF;
-  background: #F3F4F6; border-radius: 4px; padding: 0.1rem 0.4rem; margin-left: 0.3rem;
+/* ─── Schedule Mode Toggle (Radio buttons) ─────────────────────────────── */
+.schedule-mode-toggle {
+  display: flex;
+  gap: 0.75rem;
+  margin-bottom: 0.5rem;
 }
-.schedule-date-row { display: flex; gap: 0.5rem; flex-wrap: wrap; }
-.date-chip {
-  padding: 0.45rem 1rem; border-radius: 20px; border: 1.5px solid #E5E7EB;
-  background: white; font-size: 0.82rem; font-weight: 600; cursor: pointer;
-  transition: all 0.2s; color: #374151; font-family: inherit;
+.mode-radio {
+  display: flex;
+  align-items: center;
+  gap: 0.5rem;
+  padding: 0.5rem 1rem;
+  border-radius: 10px;
+  border: 1.5px solid #E5E7EB;
+  background: white;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  flex: 1;
 }
-.date-chip:hover { border-color: #A5B4FC; background: #F5F7FF; }
-.date-chip.active { border-color: #6366F1; background: #EEF2FF; color: #4338CA; }
-.date-chip.clear { border-color: #FCA5A5; color: #DC2626; background: #FFF5F5; }
-.date-chip.clear:hover { background: #FEE2E2; }
+.mode-radio input[type="radio"] {
+  display: none;
+}
+.mode-radio:hover {
+  border-color: #A5B4FC;
+  background: #F5F7FF;
+}
+.mode-radio.active {
+  border-color: #6366F1;
+  background: #EEF2FF;
+  box-shadow: 0 0 0 3px rgba(99,102,241,0.15);
+}
+.mode-radio-dot {
+  width: 18px;
+  height: 18px;
+  border-radius: 50%;
+  border: 2px solid #D1D5DB;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+  transition: all 0.2s;
+}
+.mode-radio.active .mode-radio-dot {
+  border-color: #6366F1;
+  background: #6366F1;
+  box-shadow: inset 0 0 0 3px white;
+}
+.mode-radio-label {
+  font-size: 0.85rem;
+  font-weight: 600;
+  color: #374151;
+}
+.mode-radio.active .mode-radio-label {
+  color: #4338CA;
+}
 
+/* ─── Schedule Panel ──────────────────────────────────────────────────── */
+.schedule-panel {
+  padding: 0.75rem;
+  border-radius: 12px;
+  background: #FAFAFA;
+  border: 1px solid #E5E7EB;
+  display: flex;
+  flex-direction: column;
+  gap: 0.75rem;
+}
+.schedule-day-row {
+  display: flex;
+  gap: 0.5rem;
+  flex-wrap: wrap;
+}
+.day-chip {
+  padding: 0.45rem 1rem;
+  border-radius: 20px;
+  border: 1.5px solid #E5E7EB;
+  background: white;
+  font-size: 0.82rem;
+  font-weight: 600;
+  cursor: pointer;
+  transition: all 0.2s;
+  color: #374151;
+  font-family: inherit;
+  flex: 1;
+}
+.day-chip:hover {
+  border-color: #A5B4FC;
+  background: #F5F7FF;
+}
+.day-chip.active {
+  border-color: #6366F1;
+  background: #EEF2FF;
+  color: #4338CA;
+}
+
+/* ─── Schedule Error ──────────────────────────────────────────────────── */
+.schedule-error {
+  padding: 0.5rem 0.75rem;
+  border-radius: 8px;
+  background: #FEF2F2;
+  border: 1px solid #FECACA;
+  color: #DC2626;
+  font-size: 0.8rem;
+  font-weight: 600;
+  text-align: center;
+}
+
+/* ─── Quitar Button ───────────────────────────────────────────────────── */
+.btn-quitar {
+  padding: 0.4rem 1rem;
+  border-radius: 8px;
+  border: 1.5px solid #FCA5A5;
+  background: #FFF5F5;
+  color: #DC2626;
+  font-size: 0.8rem;
+  font-weight: 700;
+  cursor: pointer;
+  transition: all 0.2s;
+  font-family: inherit;
+  align-self: flex-start;
+}
+.btn-quitar:hover {
+  background: #FEE2E2;
+  border-color: #EF4444;
+}
+
+/* ─── Time Picker ─────────────────────────────────────────────────────── */
 .time-picker-row {
-  display: flex; align-items: center; gap: 1rem; margin-top: 0.6rem;
-  padding: 0.6rem 0.9rem; border-radius: 10px;
-  background: #F5F7FF; border: 1.5px solid #C7D2FE;
+  display: flex;
+  align-items: center;
+  gap: 1rem;
+  padding: 0.6rem 0.9rem;
+  border-radius: 10px;
+  background: #F5F7FF;
+  border: 1.5px solid #C7D2FE;
 }
 .schedule-date-label { font-size: 0.85rem; font-weight: 700; color: #4338CA; min-width: 50px; }
 .time-selects { display: flex; align-items: center; gap: 0.4rem; }
@@ -757,7 +1073,7 @@ onMounted(async () => {
   border-color: #6366F1;
 }
 .time-colon { font-weight: 800; font-size: 1.1rem; color: #6366F1; }
-.ampm-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1.5px solid #C7D2FE; }
+.ampm-toggle { display: flex; border-radius: 8px; overflow: hidden; border: 1.5px solid #C7D2FE; flex-shrink: 0; }
 .ampm-toggle button {
   padding: 0.35rem 0.65rem; border: none; background: white;
   font-size: 0.78rem; font-weight: 700; cursor: pointer;
@@ -768,9 +1084,9 @@ onMounted(async () => {
 
 .modal-footer { 
   display: flex; justify-content: flex-end; gap: 0.75rem; 
-  padding: 1.25rem 2rem; 
-  border-top: 1px solid #F3F4F6;
-  background: white;
+  padding: 1.1rem 1.75rem 1.25rem; 
+  border-top: 1px solid #e8ecf4;
+  background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
   flex-shrink: 0;
 }
 .btn-cancel {

@@ -408,16 +408,30 @@ const onOrderCreated = (newOrder) => {
 
 // --- Categorized Trip Lists ---
 const pendingOrders = computed(() => {
-    return orders.value.filter(o => o.status === 'publicado')
-})
-
-const scheduledOrders = computed(() => {
     const now = new Date()
     return orders.value.filter(o =>
         o.status === 'pendiente' &&
         o.scheduled_at &&
-        new Date(o.scheduled_at) > now
+        // scheduled_at viene en formato "YYYY-MM-DD HH:mm:ss" (hora local Mexico City)
+        // new Date() interpreta strings sin timezone como UTC, por lo que
+        // necesitamos crear la fecha explícitamente con los componentes locales
+        (() => {
+            const parts = o.scheduled_at.split(/[- :]/)
+            const scheduledDate = new Date(
+                parseInt(parts[0]),           // año
+                parseInt(parts[1]) - 1,       // mes (0-indexed)
+                parseInt(parts[2]),           // día
+                parseInt(parts[3]),           // hora
+                parseInt(parts[4]),           // minuto
+                parseInt(parts[5] || 0)       // segundo
+            )
+            return scheduledDate > now
+        })()
     )
+})
+
+const scheduledOrders = computed(() => {
+    return orders.value.filter(o => o.status === 'publicado')
 })
 
 const activeOrdersList = computed(() => {
@@ -483,14 +497,26 @@ const activeDrivers = computed(() => {
 
     <!-- MAP INTERFACE FOR CLIENT_ADMIN -->
     <div v-if="role === 'client_admin' && viewMode === 'map'" class="dashboard-map-view">
-        <div class="dashboard-map-container" style="display: flex;">
+        <div class="map-ambient-strip" aria-hidden="true"></div>
+        <div class="map-command-bar">
+            <div class="map-command-bar__user">
+                <span class="map-command-bar__greeting">Panel operativo</span>
+                <span class="map-command-bar__name">{{ userName }}</span>
+            </div>
+            <div class="map-command-bar__chips">
+                <span class="stat-chip stat-chip--queue"><span class="stat-chip__dot"></span>{{ stats.activeOrders }} en cola</span>
+                <span class="stat-chip stat-chip--fleet">{{ stats.totalDrivers }} conductores</span>
+                <span class="stat-chip stat-chip--balance">Saldo ${{ stats.balance.toFixed(2) }}</span>
+            </div>
+        </div>
+        <div class="dashboard-map-container dashboard-map-container--row">
             
             <!-- Orders Left Sidebar -->
-            <div class="data-sidebar right-border">
+            <div class="data-sidebar data-sidebar--orders">
                 <!-- Pending Trips Section -->
                 <div class="sidebar-section">
                     <div class="sidebar-header">
-                        <h3>Viajes Pendientes</h3>
+                        <h3><span class="sidebar-header__icon" aria-hidden="true">⏳</span> Pendientes</h3>
                         <span class="badge pending" v-if="pendingOrders.length > 0">{{ pendingOrders.length }}</span>
                     </div>
                     <div class="sidebar-list scrollable">
@@ -502,7 +528,10 @@ const activeDrivers = computed(() => {
                                  :class="{ active: selectedOrder?.id === order.id }">
                                 <div class="order-header">
                                     <span class="id">⏳ #{{ order.id }}</span>
-                                    <span class="time">{{ new Date(order.created_at).toLocaleTimeString([], {hour: '2-digit', minute:'2-digit'}) }}</span>
+                                    <span class="scheduled-time">
+                                        {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) })() }}
+                                        {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) })() }}
+                                    </span>
                                 </div>
                                 <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
                                 <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
@@ -515,9 +544,9 @@ const activeDrivers = computed(() => {
                 </div>
 
                 <!-- Scheduled Trips Section -->
-                <div class="sidebar-section" style="border-top: 2px solid #f3f4f6;" v-if="scheduledOrders.length > 0">
+                <div class="sidebar-section sidebar-section--divider" v-if="scheduledOrders.length > 0">
                     <div class="sidebar-header">
-                        <h3>Programados</h3>
+                        <h3><span class="sidebar-header__icon" aria-hidden="true">📅</span> Programados</h3>
                         <span class="badge scheduled">{{ scheduledOrders.length }}</span>
                     </div>
                     <div class="sidebar-list scrollable">
@@ -525,8 +554,8 @@ const activeDrivers = computed(() => {
                             <div class="order-header">
                                 <span class="id">📅 #{{ order.id }}</span>
                                 <span class="scheduled-time">
-                                    {{ new Date(order.scheduled_at).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) }}
-                                    {{ new Date(order.scheduled_at).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) }}
+                                    {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) })() }}
+                                    {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) })() }}
                                 </span>
                             </div>
                             <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
@@ -536,12 +565,12 @@ const activeDrivers = computed(() => {
                 </div>
 
                 <!-- Active Trips Section -->
-                <div class="sidebar-section" style="border-top: 2px solid #f3f4f6; flex: 1; display: flex; flex-direction: column;">
+                <div class="sidebar-section sidebar-section--divider sidebar-section--grow">
                     <div class="sidebar-header">
-                        <h3>Viajes Activos</h3>
+                        <h3><span class="sidebar-header__icon" aria-hidden="true">🛵</span> Activos</h3>
                         <span class="badge active-now" v-if="activeOrdersList.length > 0">{{ activeOrdersList.length }}</span>
                     </div>
-                    <div class="sidebar-list scrollable" style="flex: 1;">
+                    <div class="sidebar-list scrollable sidebar-list--fill">
                         <div v-if="activeOrdersList.length > 0">
                             <div v-for="order in activeOrdersList" 
                                  :key="order.id" 
@@ -569,26 +598,29 @@ const activeDrivers = computed(() => {
             </div>
 
             <!-- Main Map Area -->
-            <div class="map-area" style="flex: 1; position: relative; height: 100%;">
-                <div id="map-root"></div>
+            <div class="map-area map-area--main">
+                <div id="map-root" class="map-root-frame"></div>
                 
                 <!-- Floating Navigation Overlays -->
                 <div class="map-controls-top">
-                    <div class="map-pill active">
-                        <span class="dot pulse green"></span> {{ stats.activeOrders }} Viajes en Cola
+                    <div class="map-toolbar-label">Acciones rápidas</div>
+                    <div class="map-pill map-pill--stat">
+                        <span class="dot pulse green"></span> {{ stats.activeOrders }} en cola
                     </div>
-                    <button class="map-pill secondary">
-                        <span class="icon">🏎️</span> {{ stats.totalDrivers }} Conductores
+                    <button type="button" class="map-pill map-pill--stat map-pill--ghost">
+                        <span class="icon">🏎️</span> {{ stats.totalDrivers }} online
                     </button>
                     <button
+                        type="button"
                         class="map-pill generate"
                         :class="{ disabled: !hasZones }"
                         :disabled="!hasZones"
                         :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
                         @click="hasZones && (showCreateOrder = true)">
-                        <span class="icon">🤖</span> IA
+                        <span class="icon">✨</span> Generar con IA
                     </button>
                     <button
+                        type="button"
                         class="map-pill generate-manual"
                         :class="{ disabled: !hasZones }"
                         :disabled="!hasZones"
@@ -596,16 +628,17 @@ const activeDrivers = computed(() => {
                         @click="hasZones && (showCreateOrderManual = true)">
                         <span class="icon">📝</span> Manual
                     </button>
-                    <div v-if="!hasZones" class="map-pill warning-pill">
-                        ⚠️ Sin zonas configuradas
+                    <div v-if="!hasZones" class="map-pill warning-pill" role="status">
+                        Sin zonas configuradas
                     </div>
                 </div>
 
                 <!-- Side Route Detail Panel -->
                 <transition name="slide-right">
                     <div v-if="selectedOrder" class="map-detail-panel">
-                        <button class="close-panel" @click="clearSelection">&times;</button>
-                        <h3>Detalles del Viaje</h3>
+                        <button type="button" class="close-panel" aria-label="Cerrar panel" @click="clearSelection">&times;</button>
+                        <p class="map-detail-panel__eyebrow">Viaje seleccionado</p>
+                        <h3 class="map-detail-panel__title">Detalle del envío</h3>
                         
                         <div class="route-visual">
                             <div class="route-stop">
@@ -675,18 +708,22 @@ const activeDrivers = computed(() => {
                             </div>
                         </div>
 
-                        <button class="btn-danger full-width" @click="cancelOrder">
-                            Cancelar Viaje
+                        <button 
+                            type="button"
+                            v-if="['pendiente', 'publicado', 'tomado', 'arribado'].includes(selectedOrder.status)" 
+                            class="btn-danger full-width" 
+                            @click="cancelOrder">
+                            Cancelar viaje
                         </button>
                     </div>
                 </transition>
             </div>
             
             <!-- Drivers Right Sidebar -->
-            <div class="data-sidebar left-border">
+            <div class="data-sidebar data-sidebar--fleet">
                 <div class="sidebar-header">
-                    <h3>Flotilla</h3>
-                    <span class="badge" v-if="activeDrivers.length > 0">{{ activeDrivers.length }} En Línea</span>
+                    <h3><span class="sidebar-header__icon" aria-hidden="true">🏎️</span> Flotilla</h3>
+                    <span class="badge badge--fleet" v-if="activeDrivers.length > 0">{{ activeDrivers.length }} en línea</span>
                 </div>
                 <div class="sidebar-list" v-if="activeDrivers.length > 0">
                     <div class="driver-card" v-for="driver in activeDrivers" :key="driver.id" @click="focusDriver(driver)">
@@ -776,7 +813,84 @@ const activeDrivers = computed(() => {
   position: relative; 
   flex: 1;
   min-height: 0;
+  background: linear-gradient(165deg, #f1f5f9 0%, #e8eef7 45%, #f8fafc 100%);
 }
+
+.map-ambient-strip {
+  height: 3px;
+  flex-shrink: 0;
+  background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4);
+  opacity: 0.85;
+}
+
+.map-command-bar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 1rem;
+  flex-wrap: wrap;
+  padding: 0.65rem 1.25rem 0.85rem;
+  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
+  background: rgba(255, 255, 255, 0.72);
+  backdrop-filter: blur(10px);
+}
+
+.map-command-bar__user {
+  display: flex;
+  flex-direction: column;
+  gap: 0.1rem;
+  min-width: 0;
+}
+
+.map-command-bar__greeting {
+  font-size: 0.7rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: #64748b;
+}
+
+.map-command-bar__name {
+  font-size: 1rem;
+  font-weight: 700;
+  color: #0f172a;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.map-command-bar__chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.5rem;
+  align-items: center;
+}
+
+.stat-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.35rem;
+  padding: 0.35rem 0.75rem;
+  border-radius: 999px;
+  font-size: 0.78rem;
+  font-weight: 700;
+  border: 1px solid transparent;
+  background: #fff;
+  color: #334155;
+  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
+}
+
+.stat-chip__dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: #22c55e;
+  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
+}
+
+.stat-chip--queue { border-color: #c7d2fe; background: #eef2ff; color: #3730a3; }
+.stat-chip--fleet { border-color: #bae6fd; background: #f0f9ff; color: #0369a1; }
+.stat-chip--balance { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
 
 .dashboard-map-container {
     flex: 1; 
@@ -786,25 +900,91 @@ const activeDrivers = computed(() => {
     box-shadow: none;
 }
 
+.dashboard-map-container--row {
+  display: flex;
+}
+
+.map-root-frame {
+  width: 100%;
+  height: 100%;
+  border-radius: 0;
+}
+
 #map-root { 
   width: 100%; 
   height: 100%; 
-  background: #f0f0f0; 
+  background: #e2e8f0;
+}
+
+.map-area--main {
+  flex: 1;
+  position: relative;
+  height: 100%;
+  min-width: 0;
 }
 
 .map-controls-top {
-    position: absolute; top: 1.5rem; left: 1.5rem; z-index: 100;
-    display: flex; gap: 1rem;
+    position: absolute;
+    top: 1rem;
+    left: 1rem;
+    z-index: 100;
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5rem 0.65rem;
+    max-width: calc(100% - 2rem);
+    padding: 0.55rem 0.65rem 0.55rem 0.75rem;
+    border-radius: 14px;
+    background: rgba(255, 255, 255, 0.88);
+    border: 1px solid rgba(226, 232, 240, 0.9);
+    box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.25);
+    backdrop-filter: blur(10px);
+}
+
+.map-toolbar-label {
+  width: 100%;
+  flex-basis: 100%;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-bottom: 0.15rem;
 }
 
 .map-pill {
-    background: white; border: none; padding: 0.6rem 1.2rem; border-radius: 999px;
-    box-shadow: 0 4px 6px rgba(0,0,0,0.1); display: flex; align-items: center; gap: 0.5rem;
-    font-weight: 600; font-size: 0.85rem; cursor: pointer; transition: all 0.2s;
+    background: #f8fafc;
+    border: 1px solid #e2e8f0;
+    padding: 0.45rem 0.95rem;
+    border-radius: 999px;
+    box-shadow: none;
+    display: flex;
+    align-items: center;
+    gap: 0.45rem;
+    font-weight: 600;
+    font-size: 0.8rem;
+    cursor: default;
+    transition: border-color 0.2s, background 0.2s, transform 0.2s;
+    color: #334155;
 }
 
-.map-pill.active { background: #6366F1; color: white; }
-.map-pill.secondary { background: white; color: var(--text-main); }
+.map-pill--stat {
+  background: linear-gradient(135deg, #4f46e5, #6366f1);
+  color: #fff;
+  border-color: transparent;
+  cursor: default;
+  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
+}
+
+.map-pill--ghost {
+  background: #fff;
+  color: #0f172a;
+  border-color: #e2e8f0;
+  cursor: default;
+}
+
+button.map-pill { cursor: pointer; font-family: inherit; }
+
 .map-pill.generate {
     background: linear-gradient(135deg, #6366F1, #8B5CF6);
     color: white;
@@ -819,20 +999,55 @@ const activeDrivers = computed(() => {
 }
 .map-pill.generate-manual:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45); }
 .map-pill.generate-manual.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
-.warning-pill { background: #FEF3C7; color: #92400E; border: 1px solid #FCD34D; font-size: 0.8rem; cursor: default; }
+.warning-pill {
+  background: #fffbeb;
+  color: #b45309;
+  border: 1px solid #fde68a;
+  font-size: 0.75rem;
+  font-weight: 700;
+  cursor: default;
+}
 
 /* Shared Sidebars inside Map Container */
 .data-sidebar {
-    width: 280px; background: white; 
-    display: flex; flex-direction: column; height: 100%;
+    width: 300px;
+    background: rgba(255, 255, 255, 0.94);
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    border-color: rgba(148, 163, 184, 0.35);
 }
-.data-sidebar.left-border { border-left: 1px solid var(--border-light); }
-.data-sidebar.right-border { border-right: 1px solid var(--border-light); }
+
+.data-sidebar--orders {
+  border-right: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: 8px 0 24px -18px rgba(15, 23, 42, 0.35);
+}
+
+.data-sidebar--fleet {
+  border-left: 1px solid rgba(148, 163, 184, 0.35);
+  box-shadow: -8px 0 24px -18px rgba(15, 23, 42, 0.35);
+}
 
 .sidebar-section {
     display: flex;
     flex-direction: column;
     max-height: 50%;
+}
+
+.sidebar-section--divider {
+  border-top: 1px solid rgba(226, 232, 240, 0.95);
+}
+
+.sidebar-section--grow {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+.sidebar-list--fill {
+  flex: 1;
+  min-height: 0;
 }
 
 .sidebar-list.scrollable {
@@ -850,12 +1065,37 @@ const activeDrivers = computed(() => {
 }
 
 .sidebar-header {
-    padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
-    display: flex; justify-content: space-between; align-items: center;
+    padding: 0.85rem 1rem;
+    border-bottom: 1px solid rgba(241, 245, 249, 0.9);
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
 }
 
-.sidebar-header h3 { font-size: 0.9rem; font-weight: 700; margin: 0; color: #4B5563; text-transform: uppercase; letter-spacing: 0.025em; }
+.sidebar-header h3 {
+  font-size: 0.78rem;
+  font-weight: 800;
+  margin: 0;
+  color: #475569;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  display: flex;
+  align-items: center;
+  gap: 0.4rem;
+}
+
+.sidebar-header__icon {
+  font-size: 0.95rem;
+  opacity: 0.9;
+}
+
 .sidebar-header .badge { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
+.sidebar-header .badge--fleet {
+  background: #ecfdf5;
+  color: #047857;
+  border: 1px solid #a7f3d0;
+}
 .sidebar-header .badge.pending { background: #FEF3C7; color: #92400E; }
 .sidebar-header .badge.active-now { background: #DBEAFE; color: #1E40AF; }
 .sidebar-header .badge.scheduled { background: #F3E8FF; color: #6D28D9; }
@@ -883,10 +1123,28 @@ const activeDrivers = computed(() => {
 
 /* Orders specific */
 .order-card {
-    background: white; padding: 1rem 1.2rem; border-bottom: 1px solid var(--border-light);
-    cursor: pointer; transition: all 0.2s; display: flex; flex-direction: column; gap: 0.5rem;
+    margin: 0.5rem 0.65rem;
+    padding: 0.85rem 0.95rem;
+    background: #fff;
+    border: 1px solid #e8ecf4;
+    border-radius: 12px;
+    cursor: pointer;
+    transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
+    display: flex;
+    flex-direction: column;
+    gap: 0.45rem;
+    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
 }
-.order-card:hover, .order-card.active { border-left: 4px solid #6366F1; background: #F5F7FF; padding-left: calc(1.2rem - 4px); }
+.order-card:hover {
+  border-color: #c7d2fe;
+  box-shadow: 0 8px 20px -12px rgba(79, 70, 229, 0.45);
+  transform: translateY(-1px);
+}
+.order-card.active {
+  border-color: #6366f1;
+  background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
+  box-shadow: 0 10px 28px -14px rgba(79, 70, 229, 0.55);
+}
 .order-card .order-header { display: flex; justify-content: space-between; margin-bottom: 0.25rem; }
 .order-card .id { font-weight: 700; font-size: 0.85rem; color: #6366F1; display: flex; align-items: center; gap: 0.25rem; }
 .order-card .time { font-size: 0.75rem; color: var(--text-light); }
@@ -904,8 +1162,8 @@ const activeDrivers = computed(() => {
     border-radius: 4px;
     text-transform: uppercase;
 }
-.order-card.scheduled-card { border-left: 3px solid #8B5CF6; }
-.order-card.scheduled-card:hover { border-left-color: #6D28D9; background: #FAF5FF; }
+.order-card.scheduled-card { border-left: 4px solid #8b5cf6; }
+.order-card.scheduled-card:hover { border-left-color: #6d28d9; background: #faf5ff; }
 .scheduled-time { font-size: 0.7rem; color: #6D28D9; font-weight: 700; }
 .status-tag.tomado { background: #D1FAE5; color: #065F46; }
 .status-tag.arribado { background: #E0F2FE; color: #075985; }
@@ -928,11 +1186,35 @@ const activeDrivers = computed(() => {
 
 /* Detail Panel */
 .map-detail-panel {
-    position: absolute; right: 1.5rem; top: 1.5rem; width: 320px; background: white;
-    z-index: 100; border-radius: 12px; padding: 1.5rem; box-shadow: 0 20px 25px -5px rgba(0,0,0,0.1);
+    position: absolute;
+    right: 1rem;
+    top: 1rem;
+    width: min(340px, calc(100% - 2rem));
+    background: rgba(255, 255, 255, 0.96);
+    z-index: 100;
+    border-radius: 16px;
+    padding: 1.35rem 1.35rem 1.25rem;
+    border: 1px solid rgba(226, 232, 240, 0.95);
+    box-shadow: 0 24px 50px -20px rgba(15, 23, 42, 0.35);
+    backdrop-filter: blur(12px);
 }
 
-.map-detail-panel h3 { font-size: 1rem; font-weight: 700; margin-bottom: 1.5rem; }
+.map-detail-panel__eyebrow {
+  margin: 0 0 0.2rem;
+  font-size: 0.65rem;
+  font-weight: 800;
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: #94a3b8;
+}
+
+.map-detail-panel__title {
+  font-size: 1.05rem;
+  font-weight: 800;
+  margin: 0 0 1.15rem;
+  color: #0f172a;
+  letter-spacing: -0.02em;
+}
 
 .route-visual { position: relative; margin-bottom: 1.5rem; padding-left: 10px; }
 .route-stop { display: flex; align-items: flex-start; gap: 1rem; z-index: 2; position: relative; margin-bottom: 1rem; }
@@ -958,7 +1240,28 @@ const activeDrivers = computed(() => {
 .meta-item .value.muted { color: #9CA3AF; font-style: italic; font-weight: 400; }
 .price-row { background: #F0FDF4; border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.25rem; }
 
-.close-panel { position: absolute; top: 1rem; right: 1rem; border: none; background: transparent; font-size: 1.5rem; cursor: pointer; color: var(--text-light); }
+.close-panel {
+  position: absolute;
+  top: 0.75rem;
+  right: 0.75rem;
+  width: 2rem;
+  height: 2rem;
+  border: none;
+  border-radius: 10px;
+  background: #f1f5f9;
+  font-size: 1.25rem;
+  line-height: 1;
+  cursor: pointer;
+  color: #64748b;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  transition: background 0.2s, color 0.2s;
+}
+.close-panel:hover {
+  background: #e2e8f0;
+  color: #0f172a;
+}
 
 /* Transitions */
 .slide-right-enter-active, .slide-right-leave-active { transition: all 0.3s ease; }
@@ -1041,10 +1344,15 @@ const activeDrivers = computed(() => {
 }
 
 @media (max-width: 900px) {
-    .dashboard-map-container { flex-direction: column; }
+    .dashboard-map-container--row { flex-direction: column; }
     .data-sidebar { width: 100%; height: 300px; }
-    .data-sidebar.left-border, .data-sidebar.right-border { border: none; border-bottom: 1px solid var(--border-light); }
-    .map-area { min-height: 400px; }
-    .map-detail-panel { width: calc(100% - 3rem); left: 1.5rem; right: 1.5rem; }
+    .data-sidebar--orders, .data-sidebar--fleet {
+      border: none;
+      border-bottom: 1px solid rgba(148, 163, 184, 0.35);
+      box-shadow: none;
+    }
+    .map-area--main { min-height: 400px; }
+    .map-detail-panel { width: calc(100% - 2rem); left: 1rem; right: 1rem; }
+    .map-command-bar { padding-left: 1rem; padding-right: 1rem; }
 }
 </style>
