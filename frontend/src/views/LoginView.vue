@@ -1,52 +1,64 @@
 <template>
-  <div class="login-wrapper">
-    <div class="login-panel">
-      <div class="login-header">
-        <div class="logo-box">
-          <span class="logo-icon">📦</span>
-          <h2>DeliveryCloud</h2>
+  <div class="flex min-h-screen w-full">
+    <!-- Left: Image Panel -->
+    <div class="login-wrapper hidden lg:flex lg:w-1/2 relative overflow-hidden">
+      <img
+        src="/banner.png"
+        alt="DeliveryCloud"
+        class="absolute inset-0 w-full h-full object-cover"
+      />
+    </div>
+
+    <!-- Right: Login Form Panel -->
+    <div class="w-full lg:w-1/2 flex items-center justify-center p-6 bg-white">
+      <div class="login-panel">
+        <div class="login-header">
+          <div class="logo-box">
+            <span class="logo-icon">📦</span>
+            <h2>DeliveryCloud</h2>
+          </div>
+          <p class="subtitle">Welcome back! Please enter your details.</p>
         </div>
-        <p class="subtitle">Welcome back! Please enter your details.</p>
+
+        <form @submit.prevent="handleLogin" class="login-form">
+          <div class="form-group">
+            <label>Email Address</label>
+            <input 
+              type="email" 
+              v-model="email" 
+              class="form-control" 
+              placeholder="admin@delivery.com"
+              required
+            />
+          </div>
+          
+          <div class="form-group">
+            <label>Password</label>
+            <input 
+              type="password" 
+              v-model="password" 
+              class="form-control" 
+              placeholder="••••••••"
+              required
+            />
+          </div>
+
+          <div class="form-options">
+            <label class="remember-me">
+              <input type="checkbox" /> Remember me
+            </label>
+            <a href="#" class="forgot-link">Forgot password?</a>
+          </div>
+
+          <div v-if="errorMessage" class="error-msg">
+            {{ errorMessage }}
+          </div>
+
+          <button type="submit" class="btn btn-primary login-btn" :disabled="isLoading">
+            {{ isLoading ? 'Authenticating...' : 'Sign In' }}
+          </button>
+        </form>
       </div>
-
-      <form @submit.prevent="handleLogin" class="login-form">
-        <div class="form-group">
-          <label>Email Address</label>
-          <input 
-            type="email" 
-            v-model="email" 
-            class="form-control" 
-            placeholder="admin@delivery.com"
-            required
-          />
-        </div>
-        
-        <div class="form-group">
-          <label>Password</label>
-          <input 
-            type="password" 
-            v-model="password" 
-            class="form-control" 
-            placeholder="••••••••"
-            required
-          />
-        </div>
-
-        <div class="form-options">
-          <label class="remember-me">
-            <input type="checkbox" /> Remember me
-          </label>
-          <a href="#" class="forgot-link">Forgot password?</a>
-        </div>
-
-        <div v-if="errorMessage" class="error-msg">
-          {{ errorMessage }}
-        </div>
-
-        <button type="submit" class="btn btn-primary login-btn" :disabled="isLoading">
-          {{ isLoading ? 'Authenticating...' : 'Sign In' }}
-        </button>
-      </form>
     </div>
   </div>
 </template>
@@ -82,19 +94,15 @@ const handleLogin = async () => {
 
 <style scoped>
 .login-wrapper {
-  display: flex;
-  justify-content: center;
-  align-items: center;
   min-height: 100vh;
-  width: 100%;
-  background-color: var(--bg-app); /* light gray */
+  background-color: var(--bg-app);
 }
 
 .login-panel {
   width: 100%;
   max-width: 440px;
   padding: 3.5rem 3rem;
-  background-color: var(--bg-panel); /* pure white */
+  background-color: var(--bg-panel);
   border-radius: var(--radius-lg);
   box-shadow: var(--shadow-md);
   border: 1px solid var(--border-light);
