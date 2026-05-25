@@ -112,6 +112,9 @@ const silentUpdate = async () => {
             stats.value.totalDrivers = drivers.value.length
             stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
 
+            // Ensure balance is a number for toFixed()
+            stats.value.fleetBalance = parseFloat(stats.value.fleetBalance) || 0
+
             // Update Markers on map silently
             if (viewMode.value === 'map') {
                 updateMapMarkers()
@@ -124,8 +127,8 @@ const silentUpdate = async () => {
 
 const updateMapMarkers = () => {
     if (viewMode.value !== 'map') return;
-
-    // 1. Update/Add Driver Markers
+    // Only update markers if the map has been initialized
+    if (!MapService.getNativeMap()) return;
     drivers.value.forEach(driver => {
         const lat = parseFloat(driver.current_lat);
         const lng = parseFloat(driver.current_lng);
@@ -214,7 +217,8 @@ const fetchDashboardData = async () => {
     if (role.value === 'superadmin') {
       const clientsRes = await api.get('/clients')
       stats.value.totalClients = clientsRes.data.data.length
-      stats.value.balance = clientsRes.data.data.reduce((acc, c) => acc + parseFloat(c.credits_balance), 0)
+      stats.value.balance = clientsRes.data.data.reduce((acc, c) => acc + (parseFloat(c.credits_balance) || 0), 0)
+      stats.value.balance = parseFloat(stats.value.balance) || 0
     } else if (role.value === 'client_admin') {
       const [driversRes, geofencesRes] = await Promise.all([
           api.get('/drivers'),
@@ -227,7 +231,7 @@ const fetchDashboardData = async () => {
       console.log('🏎️ Conductores recibidos:', drivers.value.length);
       
       const meRes = await api.get('/auth/me')
-      stats.value.balance = meRes.data.data.client_balance || 0
+      stats.value.balance = parseFloat(meRes.data.data.client_balance) || 0
       
       // Initialize Map if in map mode
       if (viewMode.value === 'map') {
@@ -736,8 +740,8 @@ const activeDrivers = computed(() => {
                                 </span>
                             </div>
                             <div class="balance-row">
-                                <span class="driver-balance" :class="{ 'has-debt': driver.balance > 0 }">
-                                    Saldo: ${{ (driver.balance || 0).toFixed(2) }}
+                                <span class="driver-balance" :class="{ 'has-debt': Number(driver.balance) > 0 }">
+                                    Saldo: ${{ Number(driver.balance || 0).toFixed(2) }}
                                 </span>
                                 <span class="vehicle-small">{{ driver.vehicle_details || 'Vehículo estándar' }}</span>
                             </div>
