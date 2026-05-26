@@ -663,29 +663,20 @@ const activeDrivers = computed(() => {
                         </div>
 
                         <div class="receiver-info">
-                            <div class="receiver-item" v-if="selectedOrder.receiver_name">
-                                <span class="label">👤 Nombre de quien recibe</span>
-                                <span class="value">{{ selectedOrder.receiver_name }}</span>
+                            <div class="receiver-section-title">📋 Datos de envío</div>
+                            <div class="receiver-row" v-if="selectedOrder.receiver_name">
+                                <span class="receiver-label">👤</span>
+                                <span class="receiver-key">Recibe:</span>
+                                <span class="receiver-value">{{ selectedOrder.receiver_name }}</span>
                             </div>
-                            <div class="receiver-item" v-if="selectedOrder.receiver_phone">
-                                <span class="label">📞 Teléfono</span>
-                                <span class="value">{{ selectedOrder.receiver_phone }}</span>
-                            </div>
-                            <div class="receiver-item" v-if="selectedOrder.description">
-                                <span class="label">📝 Descripción del Paquete</span>
-                                <span class="value">{{ selectedOrder.description }}</span>
+                            <div class="receiver-row" v-if="selectedOrder.receiver_phone">
+                                <span class="receiver-label">📞</span>
+                                <span class="receiver-key">Teléfono:</span>
+                                <span class="receiver-value">{{ selectedOrder.receiver_phone }}</span>
                             </div>
                         </div>
 
                         <div class="order-meta">
-                            <div class="meta-item">
-                                <span class="label">Viaje</span>
-                                <span class="value">#{{ selectedOrder.id }}</span>
-                            </div>
-                            <div class="meta-item">
-                                <span class="label">Estado</span>
-                                <span class="value badge">{{ selectedOrder.status.toUpperCase() }}</span>
-                            </div>
                             <div class="meta-item" v-if="routeInfo">
                                 <span class="label">Distancia</span>
                                 <span class="value">{{ routeInfo.distance }}</span>
@@ -729,7 +720,7 @@ const activeDrivers = computed(() => {
                     <h3><span class="sidebar-header__icon" aria-hidden="true">🏎️</span> Flotilla</h3>
                     <span class="badge badge--fleet" v-if="activeDrivers.length > 0">{{ activeDrivers.length }} en línea</span>
                 </div>
-                <div class="sidebar-list" v-if="activeDrivers.length > 0">
+                <div class="sidebar-list scrollable" v-if="activeDrivers.length > 0">
                     <div class="driver-card" v-for="driver in activeDrivers" :key="driver.id" @click="focusDriver(driver)">
                         <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
                         <div class="driver-info">
@@ -898,7 +889,7 @@ const activeDrivers = computed(() => {
 
 .dashboard-map-container {
     flex: 1; 
-    overflow: hidden; 
+    overflow: hidden auto; 
     position: relative;
     border: none;
     box-shadow: none;
@@ -1193,7 +1184,10 @@ button.map-pill { cursor: pointer; font-family: inherit; }
     position: absolute;
     right: 1rem;
     top: 1rem;
+    bottom: 1rem;
     width: min(340px, calc(100% - 2rem));
+    max-height: calc(100% - 2rem);
+    overflow-y: auto;
     background: rgba(255, 255, 255, 0.96);
     z-index: 100;
     border-radius: 16px;
@@ -1213,15 +1207,15 @@ button.map-pill { cursor: pointer; font-family: inherit; }
 }
 
 .map-detail-panel__title {
-  font-size: 1.05rem;
+  font-size: 1rem;
   font-weight: 800;
-  margin: 0 0 1.15rem;
+  margin: 0 0 0.75rem;
   color: #0f172a;
   letter-spacing: -0.02em;
 }
 
-.route-visual { position: relative; margin-bottom: 1.5rem; padding-left: 10px; }
-.route-stop { display: flex; align-items: flex-start; gap: 1rem; z-index: 2; position: relative; margin-bottom: 1rem; }
+.route-visual { position: relative; margin-bottom: 0.75rem; padding-left: 10px; }
+.route-stop { display: flex; align-items: flex-start; gap: 1rem; z-index: 2; position: relative; margin-bottom: 0.5rem; }
 .route-line { position: absolute; left: 14px; top: 20px; bottom: 20px; width: 2px; background: #E5E7EB; border-left: 2px dashed #6366F1; z-index: 1; }
 
 .dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; }
@@ -1231,12 +1225,14 @@ button.map-pill { cursor: pointer; font-family: inherit; }
 .stop-info p.label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 2px; }
 .stop-info p.address { font-size: 0.85rem; font-weight: 500; }
 
-.receiver-info { display: flex; flex-direction: column; gap: 0.75rem; border-top: 1px solid #F3F4F6; padding-top: 1rem; margin-bottom: 1.5rem; }
-.receiver-item { display: flex; flex-direction: column; gap: 0.25rem; padding: 0.75rem; background: #F9FAFB; border-radius: 8px; border-left: 3px solid #3B82F6; }
-.receiver-item .label { color: var(--text-muted); font-size: 0.8rem; font-weight: 700; }
-.receiver-item .value { font-weight: 500; font-size: 0.9rem; color: var(--text-dark); }
+.receiver-info { display: flex; flex-direction: column; gap: 0.35rem; border-top: 1px solid #F3F4F6; padding-top: 0.6rem; margin-bottom: 0.75rem; }
+.receiver-section-title { font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.25rem; }
+.receiver-row { display: flex; align-items: center; gap: 0.5rem; }
+.receiver-label { font-size: 0.9rem; }
+.receiver-key { font-size: 0.8rem; color: #64748b; font-weight: 500; }
+.receiver-value { font-weight: 700; font-size: 0.85rem; color: var(--text-dark); }
 
-.order-meta { display: flex; flex-direction: column; gap: 1rem; border-top: 1px solid #F3F4F6; padding-top: 1rem; margin-bottom: 1.5rem; }
+.order-meta { display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid #F3F4F6; padding-top: 0.6rem; margin-bottom: 0.75rem; }
 .meta-item { display: flex; justify-content: space-between; }
 .meta-item .label { color: var(--text-muted); font-size: 0.85rem; }
 .meta-item .value { font-weight: 600; font-size: 0.85rem; }
