@@ -1,67 +1,156 @@
 <?php
 
-namespace Config;
+namespace App\Filters;
 
-use CodeIgniter\Config\BaseConfig;
+use CodeIgniter\Filters\FilterInterface;
+use CodeIgniter\HTTP\RequestInterface;
+use CodeIgniter\HTTP\ResponseInterface;
 
-/**
- * Cross-Origin Resource Sharing (CORS) Configuration
- *
- * @see https://developer.mozilla.org/en-US/docs/Web/HTTP/CORS
- */
-class Cors extends BaseConfig
+class CorsFilter implements FilterInterface
 {
-    /**
-     * The default CORS configuration.
-     *
-     * @var array{
-     *      allowedOrigins: list<string>,
-     *      allowedOriginsPatterns: list<string>,
-     *      supportsCredentials: bool,
-     *      allowedHeaders: list<string>,
-     *      exposedHeaders: list<string>,
-     *      allowedMethods: list<string>,
-     *      maxAge: int,
-     *  }
-     */
-    public array $default = [
-        'allowedOrigins' => [
-            'http://localhost:5173',
-            'http://localhost:5174',
-            'http://127.0.0.1:5173',
-            'http://127.0.0.1:5174',
-            'http://localhost:3000',
-            'http://delivery.test',
-            'https://delivery.test',
-            'http://panda_expres.test',
-            'https://unalliterative-semimagnetic-tamiko.ngrok-free.dev',
-            // 'https://tu-dominio-produccion.com',  ← agrega aquí tu dominio real
-        ],
+    public function before(RequestInterface $request, $arguments = null)
+    {
+        $response = service('response');
 
-        'allowedOriginsPatterns' => [
-            'https://[\w-]+\.ngrok-free\.dev',
-            'https://[\w-]+\.ngrok\.io',
-        ],
+        // Obtener la configuración CORS desde Config\Cors
+        $corsConfig = config('Cors');
 
-        'supportsCredentials' => true,
+        $allowedOrigins = $corsConfig->default['allowedOrigins'] ?? ['*'];
 
-        'allowedHeaders' => [
-            'Origin',
-            'X-Requested-With',
-            'Content-Type',
-            'Accept',
-            'Authorization',
-            'ngrok-skip-browser-warning',
-        ],
+        $allowedHeaders = $corsConfig->default['allowedHeaders'] ?? ['*'];
 
-        'exposedHeaders' => [
-            'Content-Type',
-            'Authorization',
-            'X-Requested-With',
-        ],
+        $allowedMethods = $corsConfig->default['allowedMethods']
+            ?? ['GET', 'POST', 'OPTIONS', 'PUT', 'DELETE', 'PATCH'];
 
-        'allowedMethods' => ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'OPTIONS'],
+        $supportsCredentials = $corsConfig->default['supportsCredentials'] ?? false;
 
-        'maxAge' => 7200,
-    ];
+        // Determinar el origen dinámicamente
+        $origin = $request->getHeaderLine('Origin');
+
+        if (in_array('*', $allowedOrigins)) {
+
+            $response->setHeader('Access-Control-Allow-Origin', '*');
+
+        } elseif ($origin && in_array($origin, $allowedOrigins)) {
+
+            $response->setHeader('Access-Control-Allow-Origin', $origin);
+
+            if ($supportsCredentials) {
+                $response->setHeader('Access-Control-Allow-Credentials', 'true');
+            }
+
+        } elseif ($origin) {
+
+            // Verificar patrones regex
+            $matched = false;
+
+            foreach (($corsConfig->default['allowedOriginsPatterns'] ?? []) as $pattern) {
+
+                // Usamos # como delimitador para evitar conflictos con https://
+                if (preg_match('#^' . $pattern . '$#', $origin)) {
+
+                    $response->setHeader('Access-Control-Allow-Origin', $origin);
+
+                    if ($supportsCredentials) {
+                        $response->setHeader('Access-Control-Allow-Credentials', 'true');
+                    }
+
+                    $matched = true;
+
+                    break;
+                }
+            }
+
+            if (!$matched) {
+
+                // Origen no permitido
+                $response->setHeader(
+                    'Access-Control-Allow-Origin',
+                    $allowedOrigins[0] ?? '*'
+                );
+            }
+        }
+
+        $response->setHeader(
+            'Access-Control-Allow-Headers',
+            implode(', ', $allowedHeaders)
+        );
+
+        $response->setHeader(
+            'Access-Control-Allow-Methods',
+            implode(', ', $allowedMethods)
+        );
+
+        $response->setHeader('Access-Control-Max-Age', '7200');
+
+        // Manejar preflight OPTIONS
+        if (strtoupper($request->getMethod()) === 'OPTIONS') {
+
+            $response->setStatusCode(204);
+
+            $response->setBody('');
+
+            return $response;
+        }
+    }
+
+    public function after(
+        RequestInterface $request,
+        ResponseInterface $response,
+        $arguments = null
+    ) {
+        // Asegurar headers CORS también en la respuesta after
+        $corsConfig = config('Cors');
+
+        $allowedOrigins = $corsConfig->default['allowedOrigins'] ?? ['*'];
+
+        $supportsCredentials = $corsConfig->default['supportsCredentials'] ?? false;
+
+        $origin = $request->getHeaderLine('Origin');
+
+        if (in_array('*', $allowedOrigins)) {
+
+            $response->setHeader('Access-Control-Allow-Origin', '*');
+
+        } elseif ($origin && in_array($origin, $allowedOrigins)) {
+
+            $response->setHeader('Access-Control-Allow-Origin', $origin);
+
+            if ($supportsCredentials) {
+                $response->setHeader('Access-Control-Allow-Credentials', 'true');
+            }
+
+        } elseif ($origin) {
+
+            foreach (($corsConfig->default['allowedOriginsPatterns'] ?? []) as $pattern) {
+
+                // Usamos # como delimitador para evitar conflictos con https://
+                if (preg_match('#^' . $pattern . '$#', $origin)) {
+
+                    $response->setHeader('Access-Control-Allow-Origin', $origin);
+
+                    if ($supportsCredentials) {
+                        $response->setHeader('Access-Control-Allow-Credentials', 'true');
+                    }
+
+                    break;
+                }
+            }
+        }
+
+        $response->setHeader(
+            'Access-Control-Allow-Headers',
+            implode(', ', $corsConfig->default['allowedHeaders'] ?? ['*'])
+        );
+
+        $response->setHeader(
+            'Access-Control-Allow-Methods',
+            implode(', ', $corsConfig->default['allowedMethods'] ?? ['*'])
+        );
+
+        $response->setHeader(
+            'Access-Control-Expose-Headers',
+            implode(', ', $corsConfig->default['exposedHeaders'] ?? [])
+        );
+    }
 }
