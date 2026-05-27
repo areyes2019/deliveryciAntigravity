@@ -191,8 +191,8 @@ const notifyNewOrder = () => {
         osc.stop(ctx.currentTime + 0.6)
     } catch {}
 
-    // Notificación del navegador si tiene permiso
-    if (Notification.permission === 'granted') {
+    // Notificación del navegador si tiene permiso (con validación para Android WebView/Capacitor)
+    if ('Notification' in window && Notification.permission === 'granted') {
         new Notification('¡Nuevo envío disponible!', {
             body: 'Hay un nuevo pedido esperando conductor.',
             icon: '/icons/icon-192x192.png',
@@ -458,7 +458,7 @@ onMounted(async () => {
         console.warn('Could not fetch driver status:', e)
     }
 
-    if (Notification.permission === 'default') Notification.requestPermission()
+    if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission()
 
     fetchTodayEarnings()
     earningsInterval = setInterval(fetchTodayEarnings, 30000)
