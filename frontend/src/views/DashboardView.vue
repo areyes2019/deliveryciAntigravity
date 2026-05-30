@@ -6,6 +6,8 @@ import MapService from '../services/maps/MapService'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 import CreateOrderManualModal from '../components/CreateOrderManualModal.vue'
 
+//Esta función pinta la moto en el mapa
+
 const buildDriverMapIcon = (highlight = false) => {
   const size = highlight ? { width: 70, height: 47 } : { width: 55, height: 37 }
   return {
@@ -14,15 +16,17 @@ const buildDriverMapIcon = (highlight = false) => {
     anchor: { x: size.width / 2, y: size.height / 2 }
   }
 }
-
+//aqui tenemos los iconos listos para usarse
 const DRIVER_MAP_ICON = buildDriverMapIcon(false)
 const DRIVER_MAP_ICON_HIGHLIGHT = buildDriverMapIcon(true)
 
+//esta funcion decide si el icono se resalta o no 
 const createDriverMapIcon = (highlight = false) => {
   return highlight ? DRIVER_MAP_ICON_HIGHLIGHT : DRIVER_MAP_ICON
 }
 
 // --- Notification Toasts ---
+//Esta funcion maneja las notificaciones
 const toasts = ref([])
 const showToast = (message, type = 'success') => {
   const id = Date.now()
@@ -32,6 +36,8 @@ const showToast = (message, type = 'success') => {
   }, 5000)
 }
 
+//Puesto que la latitud y la longitud viene en texto, esta funcion
+// la convierte a numero. Se ecarga de centrar el mapa cuando enfocamos a un conductor
 const focusDriver = (driver) => {
     const lat = parseFloat(driver.current_lat);
     const lng = parseFloat(driver.current_lng);
@@ -46,6 +52,7 @@ const authStore = useAuthStore()
 const role = computed(() => authStore.userRole)
 const userName = computed(() => authStore.user?.name || 'User')
 
+//tablero de balances para la flota
 const stats = ref({
   totalClients: 0,
   totalDrivers: 0,
@@ -54,9 +61,13 @@ const stats = ref({
   fleetBalance: 0
 })
 
+//historial vacio
 const recentActivity = ref([])
+//Cargando...
 const loading = ref(true)
+//Pedidos vacios
 const orders = ref([])
+//conductores vacios
 const drivers = ref([])
 
 // Map State
@@ -81,6 +92,7 @@ const silentUpdate = async () => {
             api.get('/orders'),
             api.get('/drivers')
         ])
+        //Todo salio bien con las ordenes y los repartidores??
         const ordersRes = ordersResult.status === 'fulfilled' ? ordersResult.value : null
         const driversRes = driversResult.status === 'fulfilled' ? driversResult.value : null
 
@@ -102,8 +114,9 @@ const silentUpdate = async () => {
                     }
                 }
             })
-
+            //se actualizan los pedidos nuevos con los viejos
             orders.value = newOrders
+            //Cuantos pedidos hay activos??
             stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
         }
 
@@ -124,7 +137,7 @@ const silentUpdate = async () => {
         console.warn('Silent update failed:', e)
     }
 }
-
+//Actualiza los marcadores del mapa
 const updateMapMarkers = () => {
     if (viewMode.value !== 'map') return;
     // Only update markers if the map has been initialized
@@ -144,7 +157,7 @@ const updateMapMarkers = () => {
     // 2. Manage Order Markers
     const activeOrderStatuses = ['publicado', 'tomado', 'arribado', 'en_camino'];
     
-    // We'll iterate through all known orders to sync the map
+    // Vamos a revisar todos los pedidos para sincronizar el mapa
     orders.value.forEach(order => {
         const markerId = `order-${order.id}`;
         const dropMarkerId = `order-drop-${order.id}`;
@@ -191,7 +204,7 @@ const updateMapMarkers = () => {
 const isDriverEnRoute = (driver) => {
     if (!orders.value || orders.value.length === 0) return false;
     
-    // Only consider orders from the last 12 hours
+    // Solo considera pedido de las ultimas 12 horas
     const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
     
     return orders.value.some(o => {
@@ -207,6 +220,7 @@ const fetchDashboardData = async () => {
   console.log('🔄 Iniciando carga de datos para:', authStore.user?.email);
   
   try {
+    //pedimos los datos al servidor
     const ordersRes = await api.get('/orders')
     if (ordersRes.data.status) {
         orders.value = ordersRes.data.data
@@ -215,6 +229,7 @@ const fetchDashboardData = async () => {
     }
 
     if (role.value === 'superadmin') {
+      //se piden todos los clientes al servidor   
       const clientsRes = await api.get('/clients')
       stats.value.totalClients = clientsRes.data.data.length
       stats.value.balance = clientsRes.data.data.reduce((acc, c) => acc + (parseFloat(c.credits_balance) || 0), 0)
@@ -249,7 +264,7 @@ const fetchDashboardData = async () => {
     loading.value = false
   }
 }
-
+//Dibuja los puntos por primera vez
 const redrawDrivers = () => {
     drivers.value.forEach(driver => {
         const lat = parseFloat(driver.current_lat);
@@ -263,7 +278,7 @@ const redrawDrivers = () => {
         }
     })
 }
-
+//Inicialia el mapa por primera vez
 const initDashboardMap = async () => {
     console.log('📍 Dibujando Mapa en #map-root...');
     await MapService.initialize('map-root', {
@@ -302,32 +317,35 @@ const initDashboardMap = async () => {
         }
     })
 }
-
+//Esta funcion muestra la ruta de una ordenn seleccinada
 const selectOrder = async (order) => {
     console.log('👁 Pedido seleccionado:', order.id, order);
+    //se guarda el pedido seleccionado
     selectedOrder.value = order
     routeInfo.value = null
     
     MapService.clearRoutes()
     MapService.removeMarker('temp-drop')
     redrawDrivers()
-    
+    //Se convierten las latitudes a digito valido 
     const pickupLat = parseFloat(order.pickup_lat)
     const pickupLng = parseFloat(order.pickup_lng)
     const dropLat   = parseFloat(order.drop_lat)
     const dropLng   = parseFloat(order.drop_lng)
     
     console.log('📍 Coordenadas:', { pickupLat, pickupLng, dropLat, dropLng });
-
+    //Se confirma que la latitudes y long son validas
     const validPickup = !isNaN(pickupLat) && !isNaN(pickupLng) && pickupLat !== 0
     const validDrop   = !isNaN(dropLat)   && !isNaN(dropLng)   && dropLat   !== 0
     
+    //Alerta si la condicion no se cumple
+
     if (!validPickup || !validDrop) {
         console.warn('⚠️ Coordenadas inválidas en el pedido', order.id);
         return;
     }
     
-    // Highlight assigned driver
+    // Si hay conductor se colocan marcadores
     if (order.driver_id) {
         const assignedDriver = drivers.value.find(d => String(d.id) === String(order.driver_id));
         if (assignedDriver) {
@@ -343,6 +361,7 @@ const selectOrder = async (order) => {
     }
 
     console.log('🛣️ Solicitando ruta vía Directions API...');
+    //pinta la ruta
     const result = await MapService.drawRoute(`route-${order.id}`, [
         [pickupLat, pickupLng],
         [dropLat, dropLng]
@@ -361,7 +380,7 @@ const clearSelection = () => {
     redrawDrivers()
     MapService.centerOn([20.5222, -100.8122], 13)
 }
-
+//cacelar ordenes
 const cancelOrder = async () => {
     if (!selectedOrder.value) return
     
