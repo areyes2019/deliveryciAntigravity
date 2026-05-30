@@ -1,9 +1,6 @@
 necesito que ejecutes una tarea específica de refactorización basándote en las instrucciones detalladas que he guardado en estos archivo: 
 
-ai\promps\refactoring\5-2.md
-ai\promps\refactoring\5-3.md
-ai\promps\refactoring\5-4.md
-
+ai\promps\refactoring\6-1.md
 
 Inmeidatamente despues ejecuta este skill: ai\skills\global\global_criticador.md
 

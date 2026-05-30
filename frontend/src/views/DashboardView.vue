@@ -2,469 +2,105 @@
 import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
-import MapService from '../services/maps/MapService'
+import { useOrders } from '../composables/useOrders'
+import { useDrivers } from '../composables/useDrivers'
+import { useRealtimeSync } from '../composables/useRealtimeSync'
+import { useDashboardMap } from '../composables/useDashboardMap'
+import { useToast } from '../composables/useToast'
+import StatsGrid from '../components/dashboard/StatsGrid.vue'
+import OrdersSidebar from '../components/dashboard/OrdersSidebar.vue'
+import DashboardMap from '../components/dashboard/DashboardMap.vue'
+import OrderDetailPanel from '../components/dashboard/OrderDetailPanel.vue'
+import FleetSidebar from '../components/dashboard/FleetSidebar.vue'
+import ToastContainer from '../components/dashboard/ToastContainer.vue'
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 import CreateOrderManualModal from '../components/CreateOrderManualModal.vue'
-
-//Esta función pinta la moto en el mapa
-
-const buildDriverMapIcon = (highlight = false) => {
-  const size = highlight ? { width: 70, height: 47 } : { width: 55, height: 37 }
-  return {
-    url: '/public/35859-removebg-preview.png',
-    scaledSize: size,
-    anchor: { x: size.width / 2, y: size.height / 2 }
-  }
-}
-//aqui tenemos los iconos listos para usarse
-const DRIVER_MAP_ICON = buildDriverMapIcon(false)
-const DRIVER_MAP_ICON_HIGHLIGHT = buildDriverMapIcon(true)
-
-//esta funcion decide si el icono se resalta o no 
-const createDriverMapIcon = (highlight = false) => {
-  return highlight ? DRIVER_MAP_ICON_HIGHLIGHT : DRIVER_MAP_ICON
-}
-
-// --- Notification Toasts ---
-//Esta funcion maneja las notificaciones
-const toasts = ref([])
-const showToast = (message, type = 'success') => {
-  const id = Date.now()
-  toasts.value.push({ id, message, type })
-  setTimeout(() => {
-    toasts.value = toasts.value.filter(t => t.id !== id)
-  }, 5000)
-}
-
-//Puesto que la latitud y la longitud viene en texto, esta funcion
-// la convierte a numero. Se ecarga de centrar el mapa cuando enfocamos a un conductor
-const focusDriver = (driver) => {
-    const lat = parseFloat(driver.current_lat);
-    const lng = parseFloat(driver.current_lng);
-    if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-        MapService.centerOn([lat, lng], 15);
-    } else {
-        alert('Este conductor no ha reportado su ubicación aún.');
-    }
-}
 
 const authStore = useAuthStore()
 const role = computed(() => authStore.userRole)
 const userName = computed(() => authStore.user?.name || 'User')
 
-//tablero de balances para la flota
-const stats = ref({
-  totalClients: 0,
-  totalDrivers: 0,
-  activeOrders: 0,
-  balance: 0,
-  fleetBalance: 0
-})
+const { orders, selectedOrder, routeInfo, selectOrder, clearSelection, cancelOrder } = useOrders()
+const { drivers, activeDrivers } = useDrivers()
+const { toasts, showToast } = useToast()
+const { isDriverEnRoute, initDashboardMap, updateMapMarkers, focusDriver, destroyMap } = useDashboardMap()
+const { startPolling, stopPolling } = useRealtimeSync()
 
-//historial vacio
-const recentActivity = ref([])
-//Cargando...
+const stats = ref({ totalClients: 0, totalDrivers: 0, activeOrders: 0, balance: 0, fleetBalance: 0 })
 const loading = ref(true)
-//Pedidos vacios
-const orders = ref([])
-//conductores vacios
-const drivers = ref([])
-
-// Map State
-const selectedOrder = ref(null)
-const routeInfo = ref(null)
-const viewMode = ref('map') // 'map' or 'stats' for client_admin
+const viewMode = ref('map')
 const showCreateOrder = ref(false)
 const showCreateOrderManual = ref(false)
 const clientZones = ref([])
-
 const hasZones = computed(() => clientZones.value.length > 0)
 
-let refreshInterval = null
+const pendingOrders = computed(() => {
+  const now = new Date()
+  return orders.value.filter(o => o.status === 'pendiente' && o.scheduled_at && (() => {
+    const p = o.scheduled_at.split(/[- :]/)
+    return new Date(parseInt(p[0]), parseInt(p[1]) - 1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5] || 0)) > now
+  })())
+})
+const scheduledOrders = computed(() => orders.value.filter(o => o.status === 'publicado'))
+const activeOrdersList = computed(() => orders.value.filter(o => ['tomado', 'arribado', 'en_camino'].includes(o.status)))
 
-// --- Real-time Logic ---
-const silentUpdate = async () => {
-    try {
-        const oldOrders = [...orders.value]
-
-        // Fetch orders and drivers independently so a driver failure doesn't block order updates
-        const [ordersResult, driversResult] = await Promise.allSettled([
-            api.get('/orders'),
-            api.get('/drivers')
-        ])
-        //Todo salio bien con las ordenes y los repartidores??
-        const ordersRes = ordersResult.status === 'fulfilled' ? ordersResult.value : null
-        const driversRes = driversResult.status === 'fulfilled' ? driversResult.value : null
-
-        if (ordersRes?.data?.status) {
-            const newOrders = ordersRes.data.data
-
-            // Check for key status transitions in the active delivery flow.
-            newOrders.forEach(order => {
-                const old = oldOrders.find(o => o.id === order.id)
-                if (old && old.status !== order.status) {
-                    const driver = driversRes?.data?.data?.find(d => String(d.id) === String(order.driver_id))
-
-                    if (old.status === 'publicado' && (order.status === 'tomado' || order.status === 'arribado' || order.status === 'en_camino')) {
-                        showToast(`✅ Viaje #${order.id} aceptado por ${driver?.name || 'un conductor'}`, 'success')
-                    } else if (old.status === 'tomado' && order.status === 'arribado') {
-                        showToast(`📍 Viaje #${order.id} llegó al punto de recogida`, 'info')
-                    } else if (old.status === 'en_camino' && order.status === 'entregado') {
-                        showToast(`🏁 Viaje #${order.id} completado con éxito por ${driver?.name || 'el conductor'}`, 'success')
-                    }
-                }
-            })
-            //se actualizan los pedidos nuevos con los viejos
-            orders.value = newOrders
-            //Cuantos pedidos hay activos??
-            stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
-        }
-
-        if (driversRes?.data?.status) {
-            drivers.value = driversRes.data.data
-            stats.value.totalDrivers = drivers.value.length
-            stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
-
-            // Ensure balance is a number for toFixed()
-            stats.value.fleetBalance = parseFloat(stats.value.fleetBalance) || 0
-
-            // Update Markers on map silently
-            if (viewMode.value === 'map') {
-                updateMapMarkers()
-            }
-        }
-    } catch (e) {
-        console.warn('Silent update failed:', e)
-    }
-}
-//Actualiza los marcadores del mapa
-const updateMapMarkers = () => {
-    if (viewMode.value !== 'map') return;
-    // Only update markers if the map has been initialized
-    if (!MapService.getNativeMap()) return;
-    drivers.value.forEach(driver => {
-        const lat = parseFloat(driver.current_lat);
-        const lng = parseFloat(driver.current_lng);
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-            MapService.updateMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: createDriverMapIcon(isDriverEnRoute(driver)),
-                className: 'driver',
-                popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
-            });
-        }
-    });
-
-    // 2. Manage Order Markers
-    const activeOrderStatuses = ['publicado', 'tomado', 'arribado', 'en_camino'];
-    
-    // Vamos a revisar todos los pedidos para sincronizar el mapa
-    orders.value.forEach(order => {
-        const markerId = `order-${order.id}`;
-        const dropMarkerId = `order-drop-${order.id}`;
-        const isActive = activeOrderStatuses.includes(order.status);
-        
-        if (isActive) {
-            const lat = parseFloat(order.pickup_lat);
-            const lng = parseFloat(order.pickup_lng);
-            const dropLat = parseFloat(order.drop_lat);
-            const dropLng = parseFloat(order.drop_lng);
-            
-            if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-                // updateMarker is idempotent: adds if new, updates if exists
-                MapService.updateMarker(markerId, [lat, lng], {
-                    icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
-                    className: 'order',
-                    popup: `<b>Pedido #${order.id}</b><br>${order.status.toUpperCase()}`
-                });
-            }
-            
-            if (!isNaN(dropLat) && !isNaN(dropLng) && dropLat !== 0) {
-                MapService.updateMarker(dropMarkerId, [dropLat, dropLng], {
-                    icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png',
-                    className: 'order-drop',
-                    popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
-                });
-            }
-        } else {
-            // Remove markers for finished/cancelled orders
-            MapService.removeMarker(markerId);
-            MapService.removeMarker(dropMarkerId);
-            
-            // Auto-clear selection if the selected order just got finished
-            if (selectedOrder.value && selectedOrder.value.id === order.id) {
-                if (order.status === 'entregado' || order.status === 'cancelado') {
-                    clearSelection();
-                    showToast(`🏁 Viaje #${order.id} finalizado y retirado del mapa`, 'info');
-                }
-            }
-        }
-    });
-}
-
-const isDriverEnRoute = (driver) => {
-    if (!orders.value || orders.value.length === 0) return false;
-    
-    // Solo considera pedido de las ultimas 12 horas
-    const twelveHoursAgo = new Date(Date.now() - 12 * 60 * 60 * 1000);
-    
-    return orders.value.some(o => {
-        const orderDate = new Date(o.created_at);
-        return String(o.driver_id) === String(driver.id) && 
-               (o.status === 'tomado' || o.status === 'arribado' || o.status === 'en_camino') &&
-               orderDate > twelveHoursAgo;
-    })
-}
+const activeStatuses = ['publicado', 'tomado', 'arribado', 'en_camino']
+const countActive = () => orders.value.filter(o => activeStatuses.includes(o.status)).length
 
 const fetchDashboardData = async () => {
   loading.value = true
-  console.log('🔄 Iniciando carga de datos para:', authStore.user?.email);
-  
   try {
-    //pedimos los datos al servidor
     const ordersRes = await api.get('/orders')
-    if (ordersRes.data.status) {
-        orders.value = ordersRes.data.data
-        stats.value.activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)).length
-        console.log('📦 Pedidos recibidos:', orders.value.length);
-    }
-
+    if (ordersRes.data.status) { orders.value = ordersRes.data.data; stats.value.activeOrders = countActive() }
     if (role.value === 'superadmin') {
-      //se piden todos los clientes al servidor   
       const clientsRes = await api.get('/clients')
       stats.value.totalClients = clientsRes.data.data.length
-      stats.value.balance = clientsRes.data.data.reduce((acc, c) => acc + (parseFloat(c.credits_balance) || 0), 0)
-      stats.value.balance = parseFloat(stats.value.balance) || 0
+      stats.value.balance = clientsRes.data.data.reduce((a, c) => a + (parseFloat(c.credits_balance) || 0), 0)
     } else if (role.value === 'client_admin') {
-      const [driversRes, geofencesRes] = await Promise.all([
-          api.get('/drivers'),
-          api.get('/geofences')
-      ])
+      const [driversRes, geofencesRes] = await Promise.all([api.get('/drivers'), api.get('/geofences')])
       drivers.value = driversRes.data.data
       stats.value.totalDrivers = drivers.value.length
-      stats.value.fleetBalance = drivers.value.reduce((acc, d) => acc + (parseFloat(d.balance) || 0), 0)
+      stats.value.fleetBalance = drivers.value.reduce((a, d) => a + (parseFloat(d.balance) || 0), 0)
       clientZones.value = geofencesRes.data?.data ?? []
-      console.log('🏎️ Conductores recibidos:', drivers.value.length);
-      
       const meRes = await api.get('/auth/me')
       stats.value.balance = parseFloat(meRes.data.data.client_balance) || 0
-      
-      // Initialize Map if in map mode
       if (viewMode.value === 'map') {
-          console.log('🗺️ Sincronizando Mapa...');
-          await nextTick()
-          // Delay de seguridad de 800ms para asegurar renderizado del DOM
-          setTimeout(async () => {
-              await initDashboardMap()
-          }, 800)
+        await nextTick()
+        setTimeout(() => initDashboardMap({ orders: orders.value, drivers: drivers.value, isDriverEnRoute: d => isDriverEnRoute(d, orders.value) }), 800)
       }
     }
-  } catch (error) {
-    console.error('❌ Error fetching dashboard data:', error)
-  } finally {
-    loading.value = false
-  }
-}
-//Dibuja los puntos por primera vez
-const redrawDrivers = () => {
-    drivers.value.forEach(driver => {
-        const lat = parseFloat(driver.current_lat);
-        const lng = parseFloat(driver.current_lng);
-        if (!isNaN(lat) && !isNaN(lng) && lat !== 0) {
-            MapService.addMarker(`driver-${driver.id}`, [lat, lng], {
-                icon: createDriverMapIcon(isDriverEnRoute(driver)),
-                className: 'driver',
-                popup: `<b>Conductor:</b> ${driver.name}<br>${driver.vehicle_details}`
-            })
-        }
-    })
-}
-//Inicialia el mapa por primera vez
-const initDashboardMap = async () => {
-    console.log('📍 Dibujando Mapa en #map-root...');
-    await MapService.initialize('map-root', {
-        zoom: 14,
-        center: [20.5222, -100.8122] // Celaya
-    })
-
-    // Limpiar marcadores previos por seguridad
-    MapService.clearMarkers()
-
-    // Add Drivers to map
-    redrawDrivers()
-
-    // Add active orders to map
-    const activeOrders = orders.value.filter(o => ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status));
-    activeOrders.forEach(order => {
-        const pickupLat = parseFloat(order.pickup_lat);
-        const pickupLng = parseFloat(order.pickup_lng);
-        const dropLat = parseFloat(order.drop_lat);
-        const dropLng = parseFloat(order.drop_lng);
-        
-        if (!isNaN(pickupLat) && !isNaN(pickupLng) && pickupLat !== 0) {
-            MapService.addMarker(`order-${order.id}`, [pickupLat, pickupLng], {
-                icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png',
-                className: 'order',
-                popup: `<b>Pedido #${order.id}</b><br>${order.pickup_address}`
-            })
-        }
-        
-        if (!isNaN(dropLat) && !isNaN(dropLng) && dropLat !== 0) {
-            MapService.addMarker(`order-drop-${order.id}`, [dropLat, dropLng], {
-                icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png',
-                className: 'order-drop',
-                popup: `<b>Entrega Pedido #${order.id}</b><br>${order.drop_address}`
-            })
-        }
-    })
-}
-//Esta funcion muestra la ruta de una ordenn seleccinada
-const selectOrder = async (order) => {
-    console.log('👁 Pedido seleccionado:', order.id, order);
-    //se guarda el pedido seleccionado
-    selectedOrder.value = order
-    routeInfo.value = null
-    
-    MapService.clearRoutes()
-    MapService.removeMarker('temp-drop')
-    redrawDrivers()
-    //Se convierten las latitudes a digito valido 
-    const pickupLat = parseFloat(order.pickup_lat)
-    const pickupLng = parseFloat(order.pickup_lng)
-    const dropLat   = parseFloat(order.drop_lat)
-    const dropLng   = parseFloat(order.drop_lng)
-    
-    console.log('📍 Coordenadas:', { pickupLat, pickupLng, dropLat, dropLng });
-    //Se confirma que la latitudes y long son validas
-    const validPickup = !isNaN(pickupLat) && !isNaN(pickupLng) && pickupLat !== 0
-    const validDrop   = !isNaN(dropLat)   && !isNaN(dropLng)   && dropLat   !== 0
-    
-    //Alerta si la condicion no se cumple
-
-    if (!validPickup || !validDrop) {
-        console.warn('⚠️ Coordenadas inválidas en el pedido', order.id);
-        return;
-    }
-    
-    // Si hay conductor se colocan marcadores
-    if (order.driver_id) {
-        const assignedDriver = drivers.value.find(d => String(d.id) === String(order.driver_id));
-        if (assignedDriver) {
-            const dLat = parseFloat(assignedDriver.current_lat)
-            const dLng = parseFloat(assignedDriver.current_lng)
-            if (!isNaN(dLat) && dLat !== 0) {
-                MapService.addMarker(`driver-${assignedDriver.id}`, [dLat, dLng], {
-                    icon: createDriverMapIcon(true),
-                    popup: `<b>Asignado:</b> ${assignedDriver.name}`
-                });
-            }
-        }
-    }
-
-    console.log('🛣️ Solicitando ruta vía Directions API...');
-    //pinta la ruta
-    const result = await MapService.drawRoute(`route-${order.id}`, [
-        [pickupLat, pickupLng],
-        [dropLat, dropLng]
-    ], { color: '#6366F1', weight: 5 })
-    
-    console.log('📡 Resultado ruta:', result);
-    if (result && result.distance) {
-        routeInfo.value = result;
-    }
+  } catch (e) { console.error('Error fetching dashboard data:', e) }
+  finally { loading.value = false }
 }
 
-const clearSelection = () => {
-    selectedOrder.value = null
-    routeInfo.value = null
-    MapService.clearRoutes()
-    redrawDrivers()
-    MapService.centerOn([20.5222, -100.8122], 13)
+const mapCtx = () => ({
+  drivers: drivers.value, orders: orders.value,
+  isDriverEnRoute: d => isDriverEnRoute(d, orders.value),
+  selectedOrder: selectedOrder.value, clearSelection, showToast
+})
+
+const onOrderCreated = (newOrder) => {
+  orders.value = [newOrder, ...orders.value]
+  stats.value.activeOrders = countActive()
+  updateMapMarkers(mapCtx())
 }
-//cacelar ordenes
-const cancelOrder = async () => {
-    if (!selectedOrder.value) return
-    
-    const orderId = selectedOrder.value.id
-    const confirmCancel = confirm(`¿Estás seguro de que deseas cancelar el viaje #${orderId}?`)
-    
-    if (!confirmCancel) return
-    
-    try {
-        const response = await api.put(`/orders/${orderId}/cancel`)
-        if (response.data.status) {
-            showToast(`Viaje #${orderId} cancelado exitosamente`, 'success')
-            clearSelection()
-            // Refresh the orders list
-            await fetchDashboardData()
-        }
-    } catch (error) {
-        const message = error.response?.data?.message || 'Error al cancelar el viaje'
-        showToast(message, 'error')
-        console.error('Error canceling order:', error)
-    }
+
+const handleSelectOrder = async (order) => {
+  await selectOrder(order, { drivers: drivers.value, createDriverMapIcon: undefined, redrawDrivers: () => updateMapMarkers(mapCtx()) })
 }
+
+const handleCancelOrder = async () => { await cancelOrder({ showToast, clearSelection, fetchDashboardData }) }
+
+const handleFocusDriver = (driver) => { focusDriver(driver, { orders: orders.value, drivers: drivers.value, isDriverEnRoute: d => isDriverEnRoute(d, orders.value) }) }
 
 onMounted(() => {
-    fetchDashboardData()
-    
-    // Start Polling (Requested: 3s)
-    refreshInterval = setInterval(() => {
-        if (role.value === 'client_admin') {
-            silentUpdate()
-        }
-    }, 3000)
+  fetchDashboardData()
+  startPolling({ role, orders, drivers, stats, showToast, updateMapMarkers: () => updateMapMarkers(mapCtx()) })
 })
 
-onUnmounted(() => {
-    if (refreshInterval) clearInterval(refreshInterval)
-    MapService.destroy()
-})
-
-// --- Handler directo al crear orden: usa el objeto ya devuelto por el backend ---
-const onOrderCreated = (newOrder) => {
-    orders.value = [newOrder, ...orders.value]
-    stats.value.activeOrders = orders.value.filter(o =>
-        ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)
-    ).length
-    updateMapMarkers()
-}
-
-// --- Categorized Trip Lists ---
-const pendingOrders = computed(() => {
-    const now = new Date()
-    return orders.value.filter(o =>
-        o.status === 'pendiente' &&
-        o.scheduled_at &&
-        // scheduled_at viene en formato "YYYY-MM-DD HH:mm:ss" (hora local Mexico City)
-        // new Date() interpreta strings sin timezone como UTC, por lo que
-        // necesitamos crear la fecha explícitamente con los componentes locales
-        (() => {
-            const parts = o.scheduled_at.split(/[- :]/)
-            const scheduledDate = new Date(
-                parseInt(parts[0]),           // año
-                parseInt(parts[1]) - 1,       // mes (0-indexed)
-                parseInt(parts[2]),           // día
-                parseInt(parts[3]),           // hora
-                parseInt(parts[4]),           // minuto
-                parseInt(parts[5] || 0)       // segundo
-            )
-            return scheduledDate > now
-        })()
-    )
-})
-
-const scheduledOrders = computed(() => {
-    return orders.value.filter(o => o.status === 'publicado')
-})
-
-const activeOrdersList = computed(() => {
-    return orders.value.filter(o => ['tomado', 'arribado', 'en_camino'].includes(o.status))
-})
-
-const activeDrivers = computed(() => {
-    return drivers.value.filter(d => d.is_active != 0)
-})
+onUnmounted(() => { stopPolling(); destroyMap() })
 </script>
+
 
 <template>
   <div class="dashboard">
@@ -475,903 +111,93 @@ const activeDrivers = computed(() => {
       </div>
     </header>
 
-    <!-- Stats Grid (Hidden for client_admin in MAP mode) -->
-    <div class="stats-grid" v-if="role === 'superadmin' || viewMode === 'stats'">
-      <div class="stat-card" v-if="role === 'superadmin'">
-        <div class="stat-icon clients">🏢</div>
-        <div class="stat-info">
-          <p class="stat-label">Clientes Totales</p>
-          <h3 class="stat-value">{{ stats.totalClients }}</h3>
-        </div>
-      </div>
-
-      <div class="stat-card" v-if="role === 'client_admin'">
-        <div class="stat-icon drivers">🏍️</div>
-        <div class="stat-info">
-          <p class="stat-label">Mis Conductores</p>
-          <h3 class="stat-value">{{ stats.totalDrivers }}</h3>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-icon orders">📦</div>
-        <div class="stat-info">
-          <p class="stat-label">Entregas Activas</p>
-          <h3 class="stat-value">{{ stats.activeOrders }}</h3>
-        </div>
-      </div>
-
-      <div class="stat-card">
-        <div class="stat-icon balance">💰</div>
-        <div class="stat-info">
-          <p class="stat-label">{{ role === 'superadmin' ? 'Saldo Total Sistema' : 'Mi Saldo (Créditos)' }}</p>
-          <h3 class="stat-value">${{ stats.balance.toFixed(2) }}</h3>
-        </div>
-      </div>
-
-      <div class="stat-card" v-if="role === 'client_admin'">
-        <div class="stat-icon fleet">🏦</div>
-        <div class="stat-info">
-          <p class="stat-label">Efectivo en Flota</p>
-          <h3 class="stat-value">${{ stats.fleetBalance.toFixed(2) }}</h3>
-        </div>
-      </div>
-    </div>
-
-    <!-- MAP INTERFACE FOR CLIENT_ADMIN -->
-    <div v-if="role === 'client_admin' && viewMode === 'map'" class="dashboard-map-view">
-        <div class="map-ambient-strip" aria-hidden="true"></div>
-        <div class="map-command-bar">
-            <div class="map-command-bar__user">
-                <span class="map-command-bar__greeting">Panel operativo</span>
-                <span class="map-command-bar__name">{{ userName }}</span>
-            </div>
-            <div class="map-command-bar__chips">
-                <span class="stat-chip stat-chip--queue"><span class="stat-chip__dot"></span>{{ stats.activeOrders }} en cola</span>
-                <span class="stat-chip stat-chip--fleet">{{ stats.totalDrivers }} conductores</span>
-                <span class="stat-chip stat-chip--balance">Saldo ${{ stats.balance.toFixed(2) }}</span>
-            </div>
-        </div>
-        <div class="dashboard-map-container dashboard-map-container--row">
-            
-            <!-- Orders Left Sidebar -->
-            <div class="data-sidebar data-sidebar--orders">
-                <!-- Pending Trips Section -->
-                <div class="sidebar-section">
-                    <div class="sidebar-header">
-                        <h3><span class="sidebar-header__icon" aria-hidden="true">⏳</span> Pendientes</h3>
-                        <span class="badge pending" v-if="pendingOrders.length > 0">{{ pendingOrders.length }}</span>
-                    </div>
-                    <div class="sidebar-list scrollable">
-                        <div v-if="pendingOrders.length > 0">
-                            <div v-for="order in pendingOrders" 
-                                 :key="order.id" 
-                                 class="order-card pending"
-                                 @click="selectOrder(order)"
-                                 :class="{ active: selectedOrder?.id === order.id }">
-                                <div class="order-header">
-                                    <span class="id">⏳ #{{ order.id }}</span>
-                                    <span class="scheduled-time">
-                                        {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) })() }}
-                                        {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) })() }}
-                                    </span>
-                                </div>
-                                <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
-                                <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
-                            </div>
-                        </div>
-                        <div class="sidebar-empty mini" v-else>
-                            No hay viajes pendientes.
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Scheduled Trips Section -->
-                <div class="sidebar-section sidebar-section--divider" v-if="scheduledOrders.length > 0">
-                    <div class="sidebar-header">
-                        <h3><span class="sidebar-header__icon" aria-hidden="true">📅</span> Programados</h3>
-                        <span class="badge scheduled">{{ scheduledOrders.length }}</span>
-                    </div>
-                    <div class="sidebar-list scrollable">
-                        <div v-for="order in scheduledOrders" :key="order.id" class="order-card scheduled-card" @click="selectOrder(order)">
-                            <div class="order-header">
-                                <span class="id">📅 #{{ order.id }}</span>
-                                <span class="scheduled-time">
-                                    {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleDateString('es-MX', { weekday: 'short', day: 'numeric', month: 'short' }) })() }}
-                                    {{ (() => { const p = order.scheduled_at.split(/[- :]/); return new Date(parseInt(p[0]), parseInt(p[1])-1, parseInt(p[2]), parseInt(p[3]), parseInt(p[4]), parseInt(p[5]||0)).toLocaleTimeString('es-MX', { hour: '2-digit', minute: '2-digit', hour12: true }) })() }}
-                                </span>
-                            </div>
-                            <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
-                            <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
-                        </div>
-                    </div>
-                </div>
-
-                <!-- Active Trips Section -->
-                <div class="sidebar-section sidebar-section--divider sidebar-section--grow">
-                    <div class="sidebar-header">
-                        <h3><span class="sidebar-header__icon" aria-hidden="true">🛵</span> Activos</h3>
-                        <span class="badge active-now" v-if="activeOrdersList.length > 0">{{ activeOrdersList.length }}</span>
-                    </div>
-                    <div class="sidebar-list scrollable sidebar-list--fill">
-                        <div v-if="activeOrdersList.length > 0">
-                            <div v-for="order in activeOrdersList" 
-                                 :key="order.id" 
-                                 class="order-card active-trip"
-                                 @click="selectOrder(order)"
-                                 :class="{ active: selectedOrder?.id === order.id }">
-                                <div class="order-header">
-                                    <span class="id">🏍️ #{{ order.id }}</span>
-                                    <span class="status-tag" :class="order.status">
-                                      {{ order.status === 'tomado' ? 'Aceptado' : order.status === 'arribado' ? 'En Recogida' : 'En Camino' }}
-                                    </span>
-                                </div>
-                                <div class="driver-assigned" v-if="order.driver_id">
-                                    <small>Conductor: {{ drivers.find(d => String(d.id) === String(order.driver_id))?.name || 'Asignado' }}</small>
-                                </div>
-                                <p class="addr"><span class="icon">🔵</span> {{ order.pickup_address }}</p>
-                                <p class="addr"><span class="icon">🔴</span> {{ order.drop_address }}</p>
-                            </div>
-                        </div>
-                        <div class="sidebar-empty mini" v-else>
-                            No hay viajes activos.
-                        </div>
-                    </div>
-                </div>
-            </div>
-
-            <!-- Main Map Area -->
-            <div class="map-area map-area--main">
-                <div id="map-root" class="map-root-frame"></div>
-                
-                <!-- Floating Navigation Overlays -->
-                <div class="map-controls-top">
-                    <div class="map-toolbar-label">Acciones rápidas</div>
-                    <div class="map-pill map-pill--stat">
-                        <span class="dot pulse green"></span> {{ stats.activeOrders }} en cola
-                    </div>
-                    <button type="button" class="map-pill map-pill--stat map-pill--ghost">
-                        <span class="icon">🏎️</span> {{ stats.totalDrivers }} online
-                    </button>
-                    <button
-                        type="button"
-                        class="map-pill generate"
-                        :class="{ disabled: !hasZones }"
-                        :disabled="!hasZones"
-                        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
-                        @click="hasZones && (showCreateOrder = true)">
-                        <span class="icon">✨</span> Generar con IA
-                    </button>
-                    <button
-                        type="button"
-                        class="map-pill generate-manual"
-                        :class="{ disabled: !hasZones }"
-                        :disabled="!hasZones"
-                        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
-                        @click="hasZones && (showCreateOrderManual = true)">
-                        <span class="icon">📝</span> Manual
-                    </button>
-                    <div v-if="!hasZones" class="map-pill warning-pill" role="status">
-                        Sin zonas configuradas
-                    </div>
-                </div>
-
-                <!-- Side Route Detail Panel -->
-                <transition name="slide-right">
-                    <div v-if="selectedOrder" class="map-detail-panel">
-                        <button type="button" class="close-panel" aria-label="Cerrar panel" @click="clearSelection">&times;</button>
-                        <p class="map-detail-panel__eyebrow">Viaje seleccionado</p>
-                        <h3 class="map-detail-panel__title">Detalle del envío</h3>
-                        
-                        <div class="route-visual">
-                            <div class="route-stop">
-                                <span class="dot green"></span>
-                                <div class="stop-info">
-                                    <p class="label">Recogida</p>
-                                    <p class="address">{{ selectedOrder.pickup_address }}</p>
-                                </div>
-                            </div>
-                            <div class="route-line"></div>
-                            <div class="route-stop">
-                                <span class="dot red"></span>
-                                <div class="stop-info">
-                                    <p class="label">Entrega</p>
-                                    <p class="address">{{ selectedOrder.drop_address }}</p>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="receiver-info">
-                            <div class="receiver-section-title">📋 Datos de envío</div>
-                            <div class="receiver-row" v-if="selectedOrder.receiver_name">
-                                <span class="receiver-label">👤</span>
-                                <span class="receiver-key">Recibe:</span>
-                                <span class="receiver-value">{{ selectedOrder.receiver_name }}</span>
-                            </div>
-                            <div class="receiver-row" v-if="selectedOrder.receiver_phone">
-                                <span class="receiver-label">📞</span>
-                                <span class="receiver-key">Teléfono:</span>
-                                <span class="receiver-value">{{ selectedOrder.receiver_phone }}</span>
-                            </div>
-                        </div>
-
-                        <div class="order-meta">
-                            <div class="meta-item" v-if="routeInfo">
-                                <span class="label">Distancia</span>
-                                <span class="value">{{ routeInfo.distance }}</span>
-                            </div>
-                            <div class="meta-item" v-if="routeInfo">
-                                <span class="label">Tiempo Est.</span>
-                                <span class="value">{{ routeInfo.duration }}</span>
-                            </div>
-                            <div class="meta-item">
-                                <span class="label">Envío</span>
-                                <span class="value">${{ Number(selectedOrder.cost).toFixed(2) }}</span>
-                            </div>
-                            <div class="meta-item" v-if="selectedOrder.payment_type === 'cash_full'">
-                                <span class="label">Producto</span>
-                                <span class="value">${{ Number(selectedOrder.product_amount || 0).toFixed(2) }}</span>
-                            </div>
-                            <div class="meta-item price-row" v-if="selectedOrder.payment_type !== 'prepaid'">
-                                <span class="label">💰 Total a Cobrar</span>
-                                <span class="value price-highlight">${{ Number(selectedOrder.total_to_collect).toFixed(2) }} MXN</span>
-                            </div>
-                            <div class="meta-item price-row" v-else>
-                                <span class="label">💰 Pagado (Prepaid)</span>
-                                <span class="value price-highlight">${{ Number(selectedOrder.cost).toFixed(2) }} MXN</span>
-                            </div>
-                        </div>
-
-                        <button 
-                            type="button"
-                            v-if="['pendiente', 'publicado', 'tomado', 'arribado'].includes(selectedOrder.status)" 
-                            class="btn-danger full-width" 
-                            @click="cancelOrder">
-                            Cancelar viaje
-                        </button>
-                    </div>
-                </transition>
-            </div>
-            
-            <!-- Drivers Right Sidebar -->
-            <div class="data-sidebar data-sidebar--fleet">
-                <div class="sidebar-header">
-                    <h3><span class="sidebar-header__icon" aria-hidden="true">🏎️</span> Flotilla</h3>
-                    <span class="badge badge--fleet" v-if="activeDrivers.length > 0">{{ activeDrivers.length }} en línea</span>
-                </div>
-                <div class="sidebar-list scrollable" v-if="activeDrivers.length > 0">
-                    <div class="driver-card" v-for="driver in activeDrivers" :key="driver.id" @click="focusDriver(driver)">
-                        <div class="driver-avatar">{{ driver.name.charAt(0).toUpperCase() }}</div>
-                        <div class="driver-info">
-                            <div class="name-row">
-                                <h4>{{ driver.name }}</h4>
-                                <span class="status-pill" :class="isDriverEnRoute(driver) ? 'en-route' : 'available'">
-                                    {{ isDriverEnRoute(driver) ? 'En Ruta' : 'Libre' }}
-                                </span>
-                            </div>
-                            <div class="balance-row">
-                                <span class="driver-balance" :class="{ 'has-debt': Number(driver.balance) > 0 }">
-                                    Saldo: ${{ Number(driver.balance || 0).toFixed(2) }}
-                                </span>
-                                <span class="vehicle-small">{{ driver.vehicle_details || 'Vehículo estándar' }}</span>
-                            </div>
-                        </div>
-                    </div>
-                </div>
-                <div class="sidebar-empty" v-else>
-                    No hay conductores en línea.
-                </div>
-            </div>
-        </div>
-    </div>
-    <!-- Toast Notifications -->
-    <div class="toast-container">
-        <transition-group name="toast">
-            <div v-for="toast in toasts" :key="toast.id" class="toast-message" :class="toast.type">
-                {{ toast.message }}
-            </div>
-        </transition-group>
-    </div>
-
-    <!-- Modal Generar Viaje (IA) -->
-    <CreateOrderModal
-        v-if="showCreateOrder"
-        @close="showCreateOrder = false"
-        @created="onOrderCreated"
+    <StatsGrid
+      v-if="role === 'superadmin' || viewMode === 'stats'"
+      :stats="stats"
+      :role="role"
     />
 
-    <!-- Modal Generar Viaje (Manual) -->
+    <div v-if="role === 'client_admin' && viewMode === 'map'" class="dashboard-map-view">
+      <div class="map-ambient-strip" aria-hidden="true"></div>
+      <div class="map-command-bar">
+        <div class="map-command-bar__user">
+          <span class="map-command-bar__greeting">Panel operativo</span>
+          <span class="map-command-bar__name">{{ userName }}</span>
+        </div>
+        <div class="map-command-bar__chips">
+          <span class="stat-chip stat-chip--queue"><span class="stat-chip__dot"></span>{{ stats.activeOrders }} en cola</span>
+          <span class="stat-chip stat-chip--fleet">{{ stats.totalDrivers }} conductores</span>
+          <span class="stat-chip stat-chip--balance">Saldo ${{ stats.balance.toFixed(2) }}</span>
+        </div>
+      </div>
+      <div class="dashboard-map-container dashboard-map-container--row">
+        <OrdersSidebar
+          :pending-orders="pendingOrders"
+          :scheduled-orders="scheduledOrders"
+          :active-orders-list="activeOrdersList"
+          :selected-order="selectedOrder"
+          :drivers="drivers"
+          @select-order="handleSelectOrder"
+        />
+
+        <DashboardMap
+          :stats="stats"
+          :has-zones="hasZones"
+          @create-order="showCreateOrder = true"
+          @create-order-manual="showCreateOrderManual = true"
+        />
+
+        <OrderDetailPanel
+          :selected-order="selectedOrder"
+          :route-info="routeInfo"
+          @close="clearSelection"
+          @cancel="handleCancelOrder"
+        />
+
+
+
+        <FleetSidebar
+          :active-drivers="activeDrivers"
+          :is-driver-en-route="(driver) => isDriverEnRoute(driver, orders)"
+          @focus-driver="handleFocusDriver"
+        />
+      </div>
+    </div>
+
+    <ToastContainer :toasts="toasts" />
+
+    <CreateOrderModal
+      v-if="showCreateOrder"
+      @close="showCreateOrder = false"
+      @created="onOrderCreated"
+    />
+
     <CreateOrderManualModal
-        v-if="showCreateOrderManual"
-        @close="showCreateOrderManual = false"
-        @created="onOrderCreated"
+      v-if="showCreateOrderManual"
+      @close="showCreateOrderManual = false"
+      @created="onOrderCreated"
     />
   </div>
 </template>
 
 <style scoped>
-.dashboard { 
-  display: flex; 
-  flex-direction: column; 
-  height: calc(100vh - var(--topbar-height)); 
-  gap: 0; 
-}
-
-.dashboard-header, .stats-grid {
-  padding: 1.5rem 2rem;
-}
-
-.dashboard-header h1 { font-size: 1.75rem; font-weight: 700; color: var(--text-main); margin-bottom: 0.25rem; }
-.dashboard-header p { color: var(--text-muted); font-size: 0.95rem; }
-
-/* Stats Grid */
-.stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(240px, 1fr)); gap: 1.5rem; }
-.stat-card {
-  background: white; padding: 1.5rem; border-radius: 12px; border: 1px solid var(--border-light);
-  display: flex; align-items: center; gap: 1.25rem; transition: transform 0.2s, box-shadow 0.2s;
-}
-.stat-card:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(0, 0, 0, 0.05); }
-.stat-icon { width: 48px; height: 48px; border-radius: 10px; display: flex; align-items: center; justify-content: center; font-size: 1.5rem; }
-.stat-icon.clients { background: #E0F2FE; }
-.stat-icon.drivers { background: #F0F9FF; }
-.stat-icon.orders { background: #FEF3C7; }
-.stat-icon.balance { background: #DCFCE7; }
-.stat-icon.fleet { background: #FEF2F2; }
-.stat-label { font-size: 0.875rem; color: var(--text-muted); margin-bottom: 0.25rem; }
-.stat-value { font-size: 1.5rem; font-weight: 700; color: var(--text-main); }
-
-/* Map Specific Dashboard Styles */
-.dashboard-map-view { 
-  display: flex; 
-  flex-direction: column; 
-  position: relative; 
-  flex: 1;
-  min-height: 0;
-  background: linear-gradient(165deg, #f1f5f9 0%, #e8eef7 45%, #f8fafc 100%);
-}
-
-.map-ambient-strip {
-  height: 3px;
-  flex-shrink: 0;
-  background: linear-gradient(90deg, #6366f1, #8b5cf6, #06b6d4);
-  opacity: 0.85;
-}
-
-.map-command-bar {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 1rem;
-  flex-wrap: wrap;
-  padding: 0.65rem 1.25rem 0.85rem;
-  border-bottom: 1px solid rgba(148, 163, 184, 0.25);
-  background: rgba(255, 255, 255, 0.72);
-  backdrop-filter: blur(10px);
-}
-
-.map-command-bar__user {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-  min-width: 0;
-}
-
-.map-command-bar__greeting {
-  font-size: 0.7rem;
-  font-weight: 700;
-  letter-spacing: 0.06em;
-  text-transform: uppercase;
-  color: #64748b;
-}
-
-.map-command-bar__name {
-  font-size: 1rem;
-  font-weight: 700;
-  color: #0f172a;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-
-.map-command-bar__chips {
-  display: flex;
-  flex-wrap: wrap;
-  gap: 0.5rem;
-  align-items: center;
-}
-
-.stat-chip {
-  display: inline-flex;
-  align-items: center;
-  gap: 0.35rem;
-  padding: 0.35rem 0.75rem;
-  border-radius: 999px;
-  font-size: 0.78rem;
-  font-weight: 700;
-  border: 1px solid transparent;
-  background: #fff;
-  color: #334155;
-  box-shadow: 0 1px 2px rgba(15, 23, 42, 0.06);
-}
-
-.stat-chip__dot {
-  width: 6px;
-  height: 6px;
-  border-radius: 50%;
-  background: #22c55e;
-  box-shadow: 0 0 0 3px rgba(34, 197, 94, 0.25);
-}
-
-.stat-chip--queue { border-color: #c7d2fe; background: #eef2ff; color: #3730a3; }
-.stat-chip--fleet { border-color: #bae6fd; background: #f0f9ff; color: #0369a1; }
-.stat-chip--balance { border-color: #bbf7d0; background: #f0fdf4; color: #166534; }
-
-.dashboard-map-container {
-    flex: 1; 
-    overflow: hidden auto; 
-    position: relative;
-    border: none;
-    box-shadow: none;
-}
-
-.dashboard-map-container--row {
-  display: flex;
-}
-
-.map-root-frame {
-  width: 100%;
-  height: 100%;
-  border-radius: 0;
-}
-
-#map-root { 
-  width: 100%; 
-  height: 100%; 
-  background: #e2e8f0;
-}
-
-.map-area--main {
-  flex: 1;
-  position: relative;
-  height: 100%;
-  min-width: 0;
-}
-
-.map-controls-top {
-    position: absolute;
-    top: 1rem;
-    left: 1rem;
-    z-index: 100;
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-    gap: 0.5rem 0.65rem;
-    max-width: calc(100% - 2rem);
-    padding: 0.55rem 0.65rem 0.55rem 0.75rem;
-    border-radius: 14px;
-    background: rgba(255, 255, 255, 0.88);
-    border: 1px solid rgba(226, 232, 240, 0.9);
-    box-shadow: 0 10px 30px -12px rgba(15, 23, 42, 0.25);
-    backdrop-filter: blur(10px);
-}
-
-.map-toolbar-label {
-  width: 100%;
-  flex-basis: 100%;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: #94a3b8;
-  margin-bottom: 0.15rem;
-}
-
-.map-pill {
-    background: #f8fafc;
-    border: 1px solid #e2e8f0;
-    padding: 0.45rem 0.95rem;
-    border-radius: 999px;
-    box-shadow: none;
-    display: flex;
-    align-items: center;
-    gap: 0.45rem;
-    font-weight: 600;
-    font-size: 0.8rem;
-    cursor: default;
-    transition: border-color 0.2s, background 0.2s, transform 0.2s;
-    color: #334155;
-}
-
-.map-pill--stat {
-  background: linear-gradient(135deg, #4f46e5, #6366f1);
-  color: #fff;
-  border-color: transparent;
-  cursor: default;
-  box-shadow: 0 4px 14px rgba(79, 70, 229, 0.35);
-}
-
-.map-pill--ghost {
-  background: #fff;
-  color: #0f172a;
-  border-color: #e2e8f0;
-  cursor: default;
-}
-
-button.map-pill { cursor: pointer; font-family: inherit; }
-
-.map-pill.generate {
-    background: linear-gradient(135deg, #6366F1, #8B5CF6);
-    color: white;
-    box-shadow: 0 4px 12px rgba(99, 102, 241, 0.35);
-}
-.map-pill.generate:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(99, 102, 241, 0.45); }
-.map-pill.generate.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
-.map-pill.generate-manual {
-    background: linear-gradient(135deg, #059669, #10B981);
-    color: white;
-    box-shadow: 0 4px 12px rgba(5, 150, 105, 0.35);
-}
-.map-pill.generate-manual:hover:not(.disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(5, 150, 105, 0.45); }
-.map-pill.generate-manual.disabled { background: #9CA3AF; box-shadow: none; cursor: not-allowed; opacity: 0.7; }
-.warning-pill {
-  background: #fffbeb;
-  color: #b45309;
-  border: 1px solid #fde68a;
-  font-size: 0.75rem;
-  font-weight: 700;
-  cursor: default;
-}
-
-/* Shared Sidebars inside Map Container */
-.data-sidebar {
-    width: 300px;
-    background: rgba(255, 255, 255, 0.94);
-    display: flex;
-    flex-direction: column;
-    height: 100%;
-    border-color: rgba(148, 163, 184, 0.35);
-}
-
-.data-sidebar--orders {
-  border-right: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: 8px 0 24px -18px rgba(15, 23, 42, 0.35);
-}
-
-.data-sidebar--fleet {
-  border-left: 1px solid rgba(148, 163, 184, 0.35);
-  box-shadow: -8px 0 24px -18px rgba(15, 23, 42, 0.35);
-}
-
-.sidebar-section {
-    display: flex;
-    flex-direction: column;
-    max-height: 50%;
-}
-
-.sidebar-section--divider {
-  border-top: 1px solid rgba(226, 232, 240, 0.95);
-}
-
-.sidebar-section--grow {
-  flex: 1;
-  min-height: 0;
-  display: flex;
-  flex-direction: column;
-}
-
-.sidebar-list--fill {
-  flex: 1;
-  min-height: 0;
-}
-
-.sidebar-list.scrollable {
-    overflow-y: auto;
-    scrollbar-width: thin;
-}
-
-.sidebar-list.scrollable::-webkit-scrollbar {
-    width: 6px;
-}
-
-.sidebar-list.scrollable::-webkit-scrollbar-thumb {
-    background: #e2e8f0;
-    border-radius: 10px;
-}
-
-.sidebar-header {
-    padding: 0.85rem 1rem;
-    border-bottom: 1px solid rgba(241, 245, 249, 0.9);
-    display: flex;
-    justify-content: space-between;
-    align-items: center;
-    background: linear-gradient(180deg, #fafbfc 0%, #fff 100%);
-}
-
-.sidebar-header h3 {
-  font-size: 0.78rem;
-  font-weight: 800;
-  margin: 0;
-  color: #475569;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
-  display: flex;
-  align-items: center;
-  gap: 0.4rem;
-}
-
-.sidebar-header__icon {
-  font-size: 0.95rem;
-  opacity: 0.9;
-}
-
-.sidebar-header .badge { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
-.sidebar-header .badge--fleet {
-  background: #ecfdf5;
-  color: #047857;
-  border: 1px solid #a7f3d0;
-}
-.sidebar-header .badge.pending { background: #FEF3C7; color: #92400E; }
-.sidebar-header .badge.active-now { background: #DBEAFE; color: #1E40AF; }
-.sidebar-header .badge.scheduled { background: #F3E8FF; color: #6D28D9; }
-
-.sidebar-list {
-    flex: 1; overflow-y: auto; display: flex; flex-direction: column;
-}
-
-/* Drivers specific */
-.driver-card {
-    display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.2rem;
-    border-bottom: 1px solid #F3F4F6; cursor: pointer; transition: background 0.2s;
-}
-.driver-card:hover { background: #F9FAFB; }
-
-.driver-avatar {
-    width: 36px; height: 36px; border-radius: 50%; background: #E0E7FF; color: #4338CA;
-    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
-    flex-shrink: 0;
-}
-
-.driver-info { flex: 1; overflow: hidden; }
-.driver-info h4 { margin: 0; font-size: 0.9rem; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.driver-info p { margin: 0; font-size: 0.75rem; color: #6B7280; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-
-/* Orders specific */
-.order-card {
-    margin: 0.5rem 0.65rem;
-    padding: 0.85rem 0.95rem;
-    background: #fff;
-    border: 1px solid #e8ecf4;
-    border-radius: 12px;
-    cursor: pointer;
-    transition: box-shadow 0.2s, border-color 0.2s, transform 0.2s;
-    display: flex;
-    flex-direction: column;
-    gap: 0.45rem;
-    box-shadow: 0 1px 2px rgba(15, 23, 42, 0.04);
-}
-.order-card:hover {
-  border-color: #c7d2fe;
-  box-shadow: 0 8px 20px -12px rgba(79, 70, 229, 0.45);
-  transform: translateY(-1px);
-}
-.order-card.active {
-  border-color: #6366f1;
-  background: linear-gradient(135deg, #f8fafc 0%, #eef2ff 100%);
-  box-shadow: 0 10px 28px -14px rgba(79, 70, 229, 0.55);
-}
-.order-card .order-header { display: flex; justify-content: space-between; margin-bottom: 0.25rem; }
-.order-card .id { font-weight: 700; font-size: 0.85rem; color: #6366F1; display: flex; align-items: center; gap: 0.25rem; }
-.order-card .time { font-size: 0.75rem; color: var(--text-light); }
-.order-card .addr { 
-    margin: 0; font-size: 0.8rem; color: var(--text-muted); 
-    white-space: nowrap; overflow: hidden; text-overflow: ellipsis; 
-    display: flex; align-items: center; gap: 0.35rem;
-}
-.order-card .icon { font-size: 0.7rem; }
-
-.status-tag {
-    font-size: 0.65rem;
-    font-weight: 700;
-    padding: 0.1rem 0.4rem;
-    border-radius: 4px;
-    text-transform: uppercase;
-}
-.order-card.scheduled-card { border-left: 4px solid #8b5cf6; }
-.order-card.scheduled-card:hover { border-left-color: #6d28d9; background: #faf5ff; }
-.scheduled-time { font-size: 0.7rem; color: #6D28D9; font-weight: 700; }
-.status-tag.tomado { background: #D1FAE5; color: #065F46; }
-.status-tag.arribado { background: #E0F2FE; color: #075985; }
-.status-tag.en_camino { background: #DBEAFE; color: #1E40AF; }
-
-.driver-assigned {
-    margin-top: -0.25rem;
-    color: #6B7280;
-    font-size: 0.75rem;
-}
-
-.sidebar-empty.mini { padding: 1rem; font-size: 0.8rem; }
-
-.sidebar-empty { padding: 2rem 1rem; text-align: center; color: var(--text-muted); font-size: 0.9rem; }
-
-.pulse { width: 8px; height: 8px; border-radius: 50%; display: inline-block; animation: pulse-animation 2s infinite; }
-.pulse.green { background: #4ADE80; }
-
-@keyframes pulse-animation { 0% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0.7); } 70% { transform: scale(1); box-shadow: 0 0 0 10px rgba(74, 222, 128, 0); } 100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74, 222, 128, 0); } }
-
-/* Detail Panel */
-.map-detail-panel {
-    position: absolute;
-    right: 1rem;
-    top: 1rem;
-    bottom: 1rem;
-    width: min(340px, calc(100% - 2rem));
-    max-height: calc(100% - 2rem);
-    overflow-y: auto;
-    background: rgba(255, 255, 255, 0.96);
-    z-index: 100;
-    border-radius: 16px;
-    padding: 1.35rem 1.35rem 1.25rem;
-    border: 1px solid rgba(226, 232, 240, 0.95);
-    box-shadow: 0 24px 50px -20px rgba(15, 23, 42, 0.35);
-    backdrop-filter: blur(12px);
-}
-
-.map-detail-panel__eyebrow {
-  margin: 0 0 0.2rem;
-  font-size: 0.65rem;
-  font-weight: 800;
-  letter-spacing: 0.1em;
-  text-transform: uppercase;
-  color: #94a3b8;
-}
-
-.map-detail-panel__title {
-  font-size: 1rem;
-  font-weight: 800;
-  margin: 0 0 0.75rem;
-  color: #0f172a;
-  letter-spacing: -0.02em;
-}
-
-.route-visual { position: relative; margin-bottom: 0.75rem; padding-left: 10px; }
-.route-stop { display: flex; align-items: flex-start; gap: 1rem; z-index: 2; position: relative; margin-bottom: 0.5rem; }
-.route-line { position: absolute; left: 14px; top: 20px; bottom: 20px; width: 2px; background: #E5E7EB; border-left: 2px dashed #6366F1; z-index: 1; }
-
-.dot { width: 10px; height: 10px; border-radius: 50%; margin-top: 5px; }
-.dot.green { background: #10B981; box-shadow: 0 0 0 4px rgba(16, 185, 129, 0.2); }
-.dot.red { background: #EF4444; box-shadow: 0 0 0 4px rgba(239, 68, 68, 0.2); }
-
-.stop-info p.label { font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; font-weight: 700; margin-bottom: 2px; }
-.stop-info p.address { font-size: 0.85rem; font-weight: 500; }
-
-.receiver-info { display: flex; flex-direction: column; gap: 0.35rem; border-top: 1px solid #F3F4F6; padding-top: 0.6rem; margin-bottom: 0.75rem; }
-.receiver-section-title { font-size: 0.7rem; font-weight: 800; text-transform: uppercase; letter-spacing: 0.05em; color: #94a3b8; margin-bottom: 0.25rem; }
-.receiver-row { display: flex; align-items: center; gap: 0.5rem; }
-.receiver-label { font-size: 0.9rem; }
-.receiver-key { font-size: 0.8rem; color: #64748b; font-weight: 500; }
-.receiver-value { font-weight: 700; font-size: 0.85rem; color: var(--text-dark); }
-
-.order-meta { display: flex; flex-direction: column; gap: 0.5rem; border-top: 1px solid #F3F4F6; padding-top: 0.6rem; margin-bottom: 0.75rem; }
-.meta-item { display: flex; justify-content: space-between; }
-.meta-item .label { color: var(--text-muted); font-size: 0.85rem; }
-.meta-item .value { font-weight: 600; font-size: 0.85rem; }
-.meta-item .value.price-highlight { color: #059669; font-size: 1rem; font-weight: 800; }
-.meta-item .value.muted { color: #9CA3AF; font-style: italic; font-weight: 400; }
-.price-row { background: #F0FDF4; border-radius: 8px; padding: 0.5rem 0.75rem; margin-top: 0.25rem; }
-
-.close-panel {
-  position: absolute;
-  top: 0.75rem;
-  right: 0.75rem;
-  width: 2rem;
-  height: 2rem;
-  border: none;
-  border-radius: 10px;
-  background: #f1f5f9;
-  font-size: 1.25rem;
-  line-height: 1;
-  cursor: pointer;
-  color: #64748b;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: background 0.2s, color 0.2s;
-}
-.close-panel:hover {
-  background: #e2e8f0;
-  color: #0f172a;
-}
-
-/* Transitions */
-.slide-right-enter-active, .slide-right-leave-active { transition: all 0.3s ease; }
-.slide-right-enter-from, .slide-right-leave-to { transform: translateX(50px); opacity: 0; }
-
-.full-width { width: 100%; justify-content: center; }
-
-.btn-primary {
-    background: #6366F1; color: white;
-    padding: 0.75rem 1.5rem; border-radius: 8px; border: none;
-    font-weight: 600; cursor: pointer; transition: all 0.2s ease;
-}
-.btn-primary:hover { background: #4F46E5; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(99, 102, 241, 0.4); }
-.btn-primary:active { transform: translateY(0); }
-
-.btn-danger {
-    background: #EF4444; color: white;
-    padding: 0.75rem 1.5rem; border-radius: 8px; border: none;
-    font-weight: 600; cursor: pointer; transition: all 0.2s ease;
-}
-.btn-danger:hover { background: #DC2626; transform: translateY(-2px); box-shadow: 0 4px 12px rgba(239, 68, 68, 0.4); }
-.btn-danger:active { transform: translateY(0); }
-
-/* Toast System */
-.toast-container {
-    position: fixed; top: 1.5rem; right: 1.5rem; 
-    z-index: 2000; display: flex; flex-direction: column; gap: 0.75rem;
-}
-.toast-message {
-    padding: 1rem 1.5rem; border-radius: 12px; background: #1F2937; color: white;
-    box-shadow: 0 10px 15px -3px rgba(0,0,0,0.1); 
-    font-weight: 600; font-size: 0.9rem; min-width: 280px;
-    border-left: 5px solid #6366F1;
-    animation: slideInLeft 0.3s ease-out;
-}
-.toast-message.success { border-left-color: #10B981; }
-.toast-message.error { border-left-color: #EF4444; }
-
-@keyframes slideInLeft {
-    from { transform: translateX(100%); opacity: 0; }
-    to { transform: translateX(0); opacity: 1; }
-}
-
-/* Driver Status Pills */
-.name-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 2px; }
-.status-pill {
-    font-size: 0.65rem; font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 20px; text-transform: uppercase;
-}
-.status-pill.available { background: #DCFCE7; color: #166534; }
-.status-pill.en-route { background: #DBEAFE; color: #1E40AF; animation: pulse-soft 2s infinite; }
-
-@keyframes pulse-soft { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
-
-/* Sidebar Cards Overrides */
-.driver-card { padding: 0.75rem 1rem !important; }
-.driver-info h4 { margin: 0; font-size: 0.85rem; }
-
-.balance-row {
-    display: flex;
-    flex-direction: column;
-    gap: 0.1rem;
-}
-
-.driver-balance {
-    font-size: 0.8rem;
-    font-weight: 700;
-    color: #64748b;
-}
-
-.driver-balance.has-debt {
-    color: #166534;
-}
-
-.vehicle-small {
-    font-size: 0.7rem;
-    color: #94a3b8;
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-@media (max-width: 900px) {
-    .dashboard-map-container--row { flex-direction: column; }
-    .data-sidebar { width: 100%; height: 300px; }
-    .data-sidebar--orders, .data-sidebar--fleet {
-      border: none;
-      border-bottom: 1px solid rgba(148, 163, 184, 0.35);
-      box-shadow: none;
-    }
-    .map-area--main { min-height: 400px; }
-    .map-detail-panel { width: calc(100% - 2rem); left: 1rem; right: 1rem; }
-    .map-command-bar { padding-left: 1rem; padding-right: 1rem; }
-}
+.dashboard { display: flex; flex-direction: column; height: calc(100vh - var(--topbar-height)); }
+.dashboard-header, .stats-grid { flex-shrink: 0; }
+.dashboard-header { padding: 1.5rem 1.5rem 0; }
+.dashboard-header .welcome h1 { font-size: 1.35rem; font-weight: 800; margin: 0 0 0.25rem; color: #0f172a; }
+.dashboard-header .welcome p { margin: 0; color: #64748b; font-size: 0.9rem; }
+.dashboard-map-view { flex: 1; display: flex; flex-direction: column; min-height: 0; position: relative; }
+.map-ambient-strip { position: absolute; top: 0; left: 0; right: 0; height: 4px; background: linear-gradient(90deg,#6366F1,#8B5CF6,#EC4899); z-index: 10; }
+.map-command-bar { display: flex; align-items: center; justify-content: space-between; padding: 0.65rem 1.25rem; background: #fff; border-bottom: 1px solid #e2e8f0; flex-shrink: 0; }
+.map-command-bar__user { display: flex; align-items: center; gap: 0.5rem; }
+.map-command-bar__greeting { font-size: 0.8rem; color: #64748b; font-weight: 500; }
+.map-command-bar__name { font-size: 0.9rem; font-weight: 700; color: #0f172a; }
+.map-command-bar__chips { display: flex; gap: 0.5rem; }
+.stat-chip { padding: 0.3rem 0.75rem; border-radius: 999px; font-size: 0.75rem; font-weight: 700; display: flex; align-items: center; gap: 0.35rem; }
+.stat-chip--queue { background: #FEF3C7; color: #92400E; }
+.stat-chip--fleet { background: #DBEAFE; color: #1E40AF; }
+.stat-chip--balance { background: #D1FAE5; color: #065F46; }
+.stat-chip__dot { width: 6px; height: 6px; border-radius: 50%; background: #F59E0B; animation: pulse-dot 2s infinite; }
+@keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
+.dashboard-map-container--row { flex: 1; display: flex; min-height: 0; position: relative; }
 </style>
