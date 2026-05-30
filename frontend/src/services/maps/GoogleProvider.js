@@ -71,8 +71,6 @@ export default class GoogleProvider extends BaseProvider {
   async initialize(containerId, options = {}) {
     await this._loadSDK();
 
-    if (this.map) return this.map;
-
     const mapElement = document.getElementById(containerId);
     if (!mapElement) throw new Error(`Contenedor #${containerId} no encontrado.`);
 
@@ -83,6 +81,26 @@ export default class GoogleProvider extends BaseProvider {
         if (parsed && !isNaN(parsed.lat)) {
             center = parsed;
         }
+    }
+
+    // ─────────────────────────────────────────────────────────────────
+    // REINICIALIZACIÓN INTELIGENTE:
+    // Si this.map ya existe, verificamos que su contenedor siga siendo
+    // el mismo nodo DOM. Si el contenedor fue reemplazado (por ejemplo,
+    // por un v-if que destruyó y recreó el div), debemos reasignar el
+    // mapa al nuevo contenedor.
+    // ─────────────────────────────────────────────────────────────────
+    if (this.map) {
+      const currentContainer = this.map.getDiv()
+      if (currentContainer !== mapElement) {
+        console.log('🔄 El contenedor del mapa fue reemplazado. Reasignando al nuevo <div>.')
+        // Google Maps no permite cambiar el contenedor de un mapa existente.
+        // Debemos destruir la instancia y crear una nueva.
+        this.destroy()
+      } else {
+        // Mismo contenedor, solo devolvemos la instancia existente
+        return this.map
+      }
     }
 
     try {

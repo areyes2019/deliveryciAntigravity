@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted, onUnmounted, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onUnmounted, nextTick } from 'vue'
 import { useAuthStore } from '../stores/auth'
 import api from '../api'
 import { useOrders } from '../composables/useOrders'
@@ -12,7 +12,9 @@ import OrdersSidebar from '../components/dashboard/OrdersSidebar.vue'
 import DashboardMap from '../components/dashboard/DashboardMap.vue'
 import OrderDetailPanel from '../components/dashboard/OrderDetailPanel.vue'
 import FleetSidebar from '../components/dashboard/FleetSidebar.vue'
+import ActivityFeed from '../components/dashboard/ActivityFeed.vue'
 import ToastContainer from '../components/dashboard/ToastContainer.vue'
+
 import CreateOrderModal from '../components/CreateOrderModal.vue'
 import CreateOrderManualModal from '../components/CreateOrderManualModal.vue'
 
@@ -23,7 +25,7 @@ const userName = computed(() => authStore.user?.name || 'User')
 const { orders, selectedOrder, routeInfo, selectOrder, clearSelection, cancelOrder } = useOrders()
 const { drivers, activeDrivers } = useDrivers()
 const { toasts, showToast } = useToast()
-const { isDriverEnRoute, initDashboardMap, updateMapMarkers, focusDriver, destroyMap } = useDashboardMap()
+const { isDriverEnRoute, initDashboardMap, resizeMap, updateMapMarkers, focusDriver, destroyMap } = useDashboardMap()
 const { startPolling, stopPolling } = useRealtimeSync()
 
 const stats = ref({ totalClients: 0, totalDrivers: 0, activeOrders: 0, balance: 0, fleetBalance: 0 })
@@ -31,6 +33,8 @@ const loading = ref(true)
 const viewMode = ref('map')
 const showCreateOrder = ref(false)
 const showCreateOrderManual = ref(false)
+const showFeed = ref(false)
+
 const clientZones = ref([])
 const hasZones = computed(() => clientZones.value.length > 0)
 
@@ -93,6 +97,26 @@ const handleCancelOrder = async () => { await cancelOrder({ showToast, clearSele
 
 const handleFocusDriver = (driver) => { focusDriver(driver, { orders: orders.value, drivers: drivers.value, isDriverEnRoute: d => isDriverEnRoute(d, orders.value) }) }
 
+// ─────────────────────────────────────────────────────────────
+// Watch: Al volver al mapa, reinicializar completamente
+// ─────────────────────────────────────────────────────────────
+watch(showFeed, (newVal) => {
+  if (!newVal) {
+    // showFeed pasó a false → estamos volviendo al mapa
+    // El contenedor #map-root fue recreado por v-if, por lo que
+    // debemos reinicializar el mapa con todos los datos actuales.
+    // Usamos flush:'post' para garantizar que el DOM ya se actualizó
+    // y el <div id="map-root"> existe antes de inicializar el mapa.
+    nextTick(() => {
+      initDashboardMap({
+        orders: orders.value,
+        drivers: drivers.value,
+        isDriverEnRoute: d => isDriverEnRoute(d, orders.value)
+      })
+    })
+  }
+}, { flush: 'post' })
+
 onMounted(() => {
   fetchDashboardData()
   startPolling({ role, orders, drivers, stats, showToast, updateMapMarkers: () => updateMapMarkers(mapCtx()) })
@@ -123,7 +147,13 @@ onUnmounted(() => { stopPolling(); destroyMap() })
         <div class="map-command-bar__user">
           <span class="map-command-bar__greeting">Panel operativo</span>
           <span class="map-command-bar__name">{{ userName }}</span>
+          <label class="view-toggle" title="Cambiar vista">
+            <span class="view-toggle__icon">{{ showFeed ? '📋' : '🗺️' }}</span>
+            <input type="checkbox" v-model="showFeed" class="view-toggle__input" />
+            <span class="view-toggle__slider"></span>
+          </label>
         </div>
+
         <div class="map-command-bar__chips">
           <span class="stat-chip stat-chip--queue"><span class="stat-chip__dot"></span>{{ stats.activeOrders }} en cola</span>
           <span class="stat-chip stat-chip--fleet">{{ stats.totalDrivers }} conductores</span>
@@ -141,11 +171,17 @@ onUnmounted(() => { stopPolling(); destroyMap() })
         />
 
         <DashboardMap
+          v-if="!showFeed"
           :stats="stats"
           :has-zones="hasZones"
           @create-order="showCreateOrder = true"
           @create-order-manual="showCreateOrderManual = true"
         />
+
+        <div v-else class="activity-feed-container">
+          <ActivityFeed />
+        </div>
+
 
         <OrderDetailPanel
           :selected-order="selectedOrder"
@@ -154,15 +190,15 @@ onUnmounted(() => { stopPolling(); destroyMap() })
           @cancel="handleCancelOrder"
         />
 
-
-
         <FleetSidebar
           :active-drivers="activeDrivers"
           :is-driver-en-route="(driver) => isDriverEnRoute(driver, orders)"
           @focus-driver="handleFocusDriver"
         />
+
       </div>
     </div>
+
 
     <ToastContainer :toasts="toasts" />
 
@@ -200,4 +236,57 @@ onUnmounted(() => { stopPolling(); destroyMap() })
 .stat-chip__dot { width: 6px; height: 6px; border-radius: 50%; background: #F59E0B; animation: pulse-dot 2s infinite; }
 @keyframes pulse-dot { 0%,100% { opacity: 1; } 50% { opacity: 0.3; } }
 .dashboard-map-container--row { flex: 1; display: flex; min-height: 0; position: relative; }
+
+/* ActivityFeed container — ocupa el mismo espacio que el mapa */
+.activity-feed-container {
+  flex: 1;
+  position: relative;
+  height: 100%;
+  min-width: 0;
+  overflow-y: auto;
+}
+
+/* View Toggle Switch */
+.view-toggle {
+  display: flex;
+  align-items: center;
+  gap: 0.35rem;
+  cursor: pointer;
+  margin-left: 0.5rem;
+  padding: 0.2rem 0.4rem;
+  border-radius: 999px;
+  background: #f1f5f9;
+  border: 1px solid #e2e8f0;
+  transition: background 0.2s;
+}
+.view-toggle:has(input:checked) {
+  background: #e0e7ff;
+  border-color: #6366F1;
+}
+.view-toggle__icon { font-size: 0.85rem; line-height: 1; }
+.view-toggle__input { display: none; }
+.view-toggle__slider {
+  width: 28px;
+  height: 16px;
+  background: #cbd5e1;
+  border-radius: 999px;
+  position: relative;
+  transition: background 0.2s;
+}
+.view-toggle__slider::after {
+  content: '';
+  position: absolute;
+  top: 2px;
+  left: 2px;
+  width: 12px;
+  height: 12px;
+  background: #fff;
+  border-radius: 50%;
+  transition: transform 0.2s;
+  box-shadow: 0 1px 2px rgba(0,0,0,0.15);
+}
+.view-toggle:has(input:checked) .view-toggle__slider { background: #6366F1; }
+.view-toggle:has(input:checked) .view-toggle__slider::after { transform: translateX(12px); }
 </style>
+
+

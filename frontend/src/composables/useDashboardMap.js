@@ -206,6 +206,22 @@ export function useDashboardMap() {
     })
   }
 
+  // --- Refrescar dimensiones del mapa (útil al alternar vistas) ---
+  const resizeMap = () => {
+    const nativeMap = MapService.getNativeMap()
+    if (!nativeMap) {
+      console.warn('⚠️ resizeMap: No hay instancia de mapa para redimensionar.')
+      return
+    }
+    // Google Maps: dispara el evento resize para que el mapa recalcule sus dimensiones
+    if (typeof google !== 'undefined' && google.maps) {
+      google.maps.event.trigger(nativeMap, 'resize')
+      // Re-centrar en Celaya para evitar que quede en coordenadas (0,0) o desubicado
+      nativeMap.setCenter({ lat: 20.5222, lng: -100.8122 })
+      console.log('📍 resizeMap: Mapa redimensionado y re-centrado.')
+    }
+  }
+
   // --- Limpiar y destruir mapa ---
   const destroyMap = () => {
     MapService.destroy()
@@ -219,6 +235,7 @@ export function useDashboardMap() {
     redrawDrivers,
     updateMapMarkers,
     focusDriver,
+    resizeMap,
     destroyMap
   }
 }

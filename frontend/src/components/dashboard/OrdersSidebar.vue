@@ -129,6 +129,8 @@ const formatScheduled = (scheduledAt) => {
 
 <style scoped>
 .data-sidebar--orders {
+  width: 280px;
+  flex-shrink: 0;
   border-right: 1px solid rgba(148, 163, 184, 0.35);
   box-shadow: 8px 0 24px -18px rgba(15, 23, 42, 0.35);
 }
