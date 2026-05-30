@@ -1,9 +1,9 @@
-necesito que ejecutes una tarea específica de refactorización basándote en las instrucciones detalladas que he guardado en este archivo: ai\promps\refactoring\1-3.md
+necesito que ejecutes una tarea específica de refactorización basándote en las instrucciones detalladas que he guardado en este archivo: ai\promps\refactoring\2-2.md
 
 Inmeidatamente despues ejecuta este skill: ai\skills\global\global_criticador.md
 
 Por favor, sigue estos pasos:
-1. Lee el contenido del archivo `1-3.md` indicado.
+1. Lee el contenido del archivo `2-2.md` indicado.
 2. Analiza el código actual en `DashboardView.vue` (o los archivos relevantes) para entender qué debes extraer o modificar.
 3. Ejecuta los cambios exactamente como se solicitan en el documento, respetando las convenciones de Vue 3 (Composition API).
 4. Cuando termines, haz un resumen breve de los archivos creados o modificados.
