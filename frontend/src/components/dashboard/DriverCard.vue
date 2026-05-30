@@ -35,94 +35,50 @@ defineEmits(['click'])
 
 <style scoped>
 .driver-card {
-  padding: 0.75rem 1rem;
-  display: flex;
-  align-items: center;
-  gap: 0.75rem;
-  border-radius: 10px;
-  cursor: pointer;
-  transition: background 0.2s, transform 0.15s;
-  border: 1px solid transparent;
+    display: flex; align-items: center; gap: 0.75rem; padding: 1rem 1.2rem;
+    border-bottom: 1px solid #F3F4F6; cursor: pointer; transition: background 0.2s;
 }
-.driver-card:hover {
-  background: #F1F5F9;
-  transform: translateX(4px);
-  border-color: #E2E8F0;
-}
+.driver-card:hover { background: #F9FAFB; }
+
 .driver-avatar {
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: linear-gradient(135deg, #6366F1, #8B5CF6);
-  color: white;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  font-weight: 700;
-  font-size: 1.1rem;
-  flex-shrink: 0;
-}
-.driver-info {
-  flex: 1;
-  min-width: 0;
-}
-.name-row {
-  display: flex;
-  align-items: center;
-  justify-content: space-between;
-  gap: 0.5rem;
-  margin-bottom: 2px;
-}
-.driver-info h4 {
-  margin: 0;
-  font-size: 0.85rem;
-  font-weight: 700;
-  color: #0F172A;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
-}
-.status-pill {
-  font-size: 0.65rem;
-  font-weight: 800;
-  padding: 0.15rem 0.5rem;
-  border-radius: 20px;
-  text-transform: uppercase;
-  white-space: nowrap;
-}
-.status-pill.available {
-  background: #DCFCE7;
-  color: #166534;
-}
-.status-pill.en-route {
-  background: #DBEAFE;
-  color: #1E40AF;
-  animation: pulse-soft 2s infinite;
-}
-.balance-row {
-  display: flex;
-  flex-direction: column;
-  gap: 0.1rem;
-}
-.driver-balance {
-  font-size: 0.8rem;
-  font-weight: 700;
-  color: #64748b;
-}
-.driver-balance.has-debt {
-  color: #166534;
-}
-.vehicle-small {
-  font-size: 0.7rem;
-  color: #94a3b8;
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+    width: 36px; height: 36px; border-radius: 50%; background: #E0E7FF; color: #4338CA;
+    display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 0.9rem;
+    flex-shrink: 0;
 }
 
-@keyframes pulse-soft {
-  0% { opacity: 1; }
-  50% { opacity: 0.7; }
-  100% { opacity: 1; }
+.driver-info { flex: 1; overflow: hidden; }
+.driver-info h4 { margin: 0; font-size: 0.9rem; font-weight: 600; color: #111827; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+.name-row { display: flex; align-items: center; justify-content: space-between; gap: 0.5rem; margin-bottom: 2px; }
+.status-pill {
+    font-size: 0.65rem; font-weight: 800; padding: 0.15rem 0.5rem; border-radius: 20px; text-transform: uppercase;
+}
+.status-pill.available { background: #DCFCE7; color: #166534; }
+.status-pill.en-route { background: #DBEAFE; color: #1E40AF; animation: pulse-soft 2s infinite; }
+
+@keyframes pulse-soft { 0% { opacity: 1; } 50% { opacity: 0.7; } 100% { opacity: 1; } }
+
+.balance-row {
+    display: flex;
+    flex-direction: column;
+    gap: 0.1rem;
+}
+
+.driver-balance {
+    font-size: 0.8rem;
+    font-weight: 700;
+    color: #64748b;
+}
+
+.driver-balance.has-debt {
+    color: #166534;
+}
+
+.vehicle-small {
+    font-size: 0.7rem;
+    color: #94a3b8;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
 }
 </style>
