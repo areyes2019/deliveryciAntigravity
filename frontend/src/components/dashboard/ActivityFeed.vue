@@ -18,37 +18,6 @@
       </div>
     </header>
 
-    <section class="ops-panel__ribbon">
-      <div class="ribbon-card ribbon-card--primary">
-        <span class="ribbon-card__icon">🚗</span>
-        <div class="ribbon-card__body">
-          <span class="ribbon-card__value">{{ activeTripsCount }}</span>
-          <span class="ribbon-card__label">Viajes activos</span>
-        </div>
-      </div>
-      <div class="ribbon-card ribbon-card--accent">
-        <span class="ribbon-card__icon">⏱️</span>
-        <div class="ribbon-card__body">
-          <span class="ribbon-card__value">{{ avgCompletionTime }}</span>
-          <span class="ribbon-card__label">Tiempo promedio</span>
-        </div>
-      </div>
-      <div class="ribbon-card ribbon-card--success">
-        <span class="ribbon-card__icon">💰</span>
-        <div class="ribbon-card__body">
-          <span class="ribbon-card__value">${{ totalFareInProgress }}</span>
-          <span class="ribbon-card__label">Monto en curso</span>
-        </div>
-      </div>
-      <div class="ribbon-card ribbon-card--warning">
-        <span class="ribbon-card__icon">🔄</span>
-        <div class="ribbon-card__body">
-          <span class="ribbon-card__value">{{ delayedCount }}</span>
-          <span class="ribbon-card__label">Retrasados</span>
-        </div>
-      </div>
-    </section>
-
     <div class="ops-panel__toolbar">
       <div class="ops-panel__search">
         <svg class="ops-panel__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
