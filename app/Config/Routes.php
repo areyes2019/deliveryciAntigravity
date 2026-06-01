@@ -69,8 +69,6 @@ $routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => '
         $routes->put('orders/(:num)/cancel', 'OrderController::cancelByDriver/$1');
     });
 
-    // TEMPORAL — diagnóstico SMS, eliminar después
-    $routes->get('sms-diag', 'SmsTestController::diagnose');
 });
 
 // ─────────────────────────────────────────────────────────────────────────────

@@ -41,7 +41,6 @@ class DriverController extends BaseController
                                    ->findAll();
 
             $drivers = $this->enrichDrivers($drivers, $billing);
-
         } else {
             // Superadmin: fetch all billing configs indexed by client_id
             $allBillings = [];

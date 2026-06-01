@@ -10,12 +10,6 @@
           </div>
         </div>
       </div>
-      <div class="ops-panel__header-right">
-        <div class="ops-panel__live-badge">
-          <span class="ops-panel__live-dot"></span>
-          <span>En vivo</span>
-        </div>
-      </div>
     </header>
 
     <div class="ops-panel__toolbar">
@@ -128,46 +122,23 @@
 </template>
 
 <script setup>
-import { ref, computed } from 'vue'
+import { ref, computed, onMounted } from 'vue'
+import { useActivityFeed } from '../../composables/useActivityFeed'
 
-const trips = ref([
-  { id: 1201, status: 'en_camino', driver_name: 'Juan Pérez', pickup_address: 'Av Tecnológico 123', dropoff_address: 'Centro Comercial Galerías', estimated_duration: 25, elapsed_time: 15, fare: 185.50 },
-  { id: 1202, status: 'en_camino', driver_name: 'María García', pickup_address: 'Calle Hidalgo 456', dropoff_address: 'Plaza Mayor', estimated_duration: 18, elapsed_time: 12, fare: 142.00 },
-  { id: 1203, status: 'en_camino', driver_name: 'Carlos López', pickup_address: 'Blvd. Independencia 789', dropoff_address: 'Hospital General', estimated_duration: 30, elapsed_time: 28, fare: 220.00 },
-  { id: 1204, status: 'en_camino', driver_name: 'Ana Martínez', pickup_address: 'Av. Universidad 234', dropoff_address: 'Terminal de Autobuses', estimated_duration: 15, elapsed_time: 5, fare: 98.75 },
-  { id: 1205, status: 'en_camino', driver_name: 'Roberto Sánchez', pickup_address: 'Calle Juárez 567', dropoff_address: 'Parque Industrial', estimated_duration: 22, elapsed_time: 20, fare: 167.30 },
-  { id: 1206, status: 'arribado', driver_name: 'Laura Fernández', pickup_address: 'Av. Reforma 890', dropoff_address: 'Hotel Fiesta Inn', estimated_duration: 12, elapsed_time: 10, fare: 85.00 },
-  { id: 1207, status: 'arribado', driver_name: 'Pedro Ramírez', pickup_address: 'Calle 5 de Mayo 123', dropoff_address: 'Auditorio Municipal', estimated_duration: 8, elapsed_time: 7, fare: 65.50 },
-  { id: 1208, status: 'arribado', driver_name: 'Sofía Torres', pickup_address: 'Av. Morelos 456', dropoff_address: 'Clínica del Valle', estimated_duration: 10, elapsed_time: 9, fare: 78.00 },
-  { id: 1209, status: 'arribado', driver_name: 'Diego Hernández', pickup_address: 'Calle Allende 789', dropoff_address: 'Universidad Politécnica', estimated_duration: 14, elapsed_time: 13, fare: 95.25 },
-  { id: 1210, status: 'tomado', driver_name: 'Gabriela Ruiz', pickup_address: 'Av. Zaragoza 321', dropoff_address: 'Plaza Cívica', estimated_duration: 20, elapsed_time: 3, fare: 155.00 },
-  { id: 1211, status: 'tomado', driver_name: 'Fernando Castillo', pickup_address: 'Calle Guerrero 654', dropoff_address: 'Mercado de Abastos', estimated_duration: 16, elapsed_time: 2, fare: 112.80 },
-  { id: 1212, status: 'tomado', driver_name: 'Valentina Ortiz', pickup_address: 'Blvd. Adolfo López Mateos 987', dropoff_address: 'Centro Histórico', estimated_duration: 25, elapsed_time: 1, fare: 198.00 },
-  { id: 1213, status: 'tomado', driver_name: 'Andrés Vega', pickup_address: 'Av. Constitución 147', dropoff_address: 'Estadio Corona', estimated_duration: 10, elapsed_time: 0, fare: 72.40 },
-  { id: 1214, status: 'publicado', driver_name: 'Daniela Ríos', pickup_address: 'Calle Madero 258', dropoff_address: 'Plaza Sendero', estimated_duration: 18, elapsed_time: 0, fare: 135.00 },
-  { id: 1215, status: 'publicado', driver_name: 'Ricardo Mendoza', pickup_address: 'Av. México 369', dropoff_address: 'Aeropuerto Internacional', estimated_duration: 35, elapsed_time: 0, fare: 280.00 },
-  { id: 1216, status: 'publicado', driver_name: 'Patricia Navarro', pickup_address: 'Calle Obregón 741', dropoff_address: 'Palacio Municipal', estimated_duration: 12, elapsed_time: 0, fare: 88.50 },
-  { id: 1217, status: 'en_camino', driver_name: 'Jorge Aguilar', pickup_address: 'Av. Patriotismo 852', dropoff_address: 'Hospital Ángeles', estimated_duration: 20, elapsed_time: 35, fare: 175.00 },
-  { id: 1218, status: 'en_camino', driver_name: 'Mónica Delgado', pickup_address: 'Calle Victoria 963', dropoff_address: 'Plaza Galerías', estimated_duration: 15, elapsed_time: 22, fare: 110.00 },
-])
+const { activeTrips, tripsByStatus, fetchData, loading, error } = useActivityFeed()
 
 const searchQuery = ref('')
 const activeFilter = ref('all')
 
-function tripsByStatus(status) {
-  return trips.value.filter(t => t.status === status)
-}
-
 const filterOptions = computed(() => [
   { key: 'all', label: 'Todos', color: '#64748b', count: filteredTrips.value.length },
-  { key: 'en_camino', label: 'En camino', color: '#10b981', count: tripsByStatus('en_camino').length },
-  { key: 'arribado', label: 'Arribado', color: '#f59e0b', count: tripsByStatus('arribado').length },
-  { key: 'tomado', label: 'Tomado', color: '#3b82f6', count: tripsByStatus('tomado').length },
-  { key: 'publicado', label: 'Publicado', color: '#94a3b8', count: tripsByStatus('publicado').length },
+  { key: 'en_camino', label: 'En camino', color: '#10b981', count: tripsByStatus.value.en_camino },
+  { key: 'arribado', label: 'Arribado', color: '#f59e0b', count: tripsByStatus.value.arribado },
+  { key: 'tomado', label: 'Tomado', color: '#3b82f6', count: tripsByStatus.value.tomado },
 ])
 
 const filteredTrips = computed(() => {
-  let result = trips.value
+  let result = activeTrips.value
   if (activeFilter.value !== 'all') result = result.filter(t => t.status === activeFilter.value)
   if (searchQuery.value.trim()) {
     const q = searchQuery.value.toLowerCase()
@@ -178,26 +149,26 @@ const filteredTrips = computed(() => {
 
 const sortedGroups = computed(() => {
   const groups = []
-  for (const status of ['en_camino', 'arribado', 'tomado', 'publicado']) {
+  for (const status of ['en_camino', 'arribado', 'tomado']) {
     const tripsInGroup = filteredTrips.value.filter(t => t.status === status).sort((a, b) => remainingTime(a) - remainingTime(b))
     if (tripsInGroup.length > 0) groups.push({ status, trips: tripsInGroup })
   }
   return groups
 })
 
-const activeTripsCount = computed(() => trips.value.filter(t => t.status !== 'publicado').length)
+const activeTripsCount = computed(() => activeTrips.value.length)
 
 const avgCompletionTime = computed(() => {
-  const active = trips.value.filter(t => t.status === 'en_camino' || t.status === 'arribado')
+  const active = activeTrips.value.filter(t => t.status === 'en_camino' || t.status === 'arribado')
   if (active.length === 0) return '—'
   return `${Math.round(active.reduce((s, t) => s + t.elapsed_time, 0) / active.length)} min`
 })
 
 const totalFareInProgress = computed(() => {
-  return trips.value.filter(t => t.status !== 'publicado').reduce((s, t) => s + t.fare, 0).toFixed(2)
+  return activeTrips.value.reduce((s, t) => s + t.fare, 0).toFixed(2)
 })
 
-const delayedCount = computed(() => trips.value.filter(t => isDelayed(t)).length)
+const delayedCount = computed(() => activeTrips.value.filter(t => isDelayed(t)).length)
 
 function isDelayed(trip) { return trip.elapsed_time > trip.estimated_duration }
 function remainingTime(trip) { return Math.max(0, trip.estimated_duration - trip.elapsed_time) }
@@ -218,9 +189,9 @@ function releaseTime(trip) {
   return `${String(n.getHours()).padStart(2, '0')}:${String(n.getMinutes()).padStart(2, '0')}`
 }
 function minRemaining(trips) { return Math.min(...trips.map(t => remainingTime(t))) }
-function statusLabel(s) { return { en_camino: 'En camino', arribado: 'Arribado', tomado: 'Tomado', publicado: 'Publicado' }[s] || s }
-function groupLabel(s) { return { en_camino: 'En Camino', arribado: 'Arribado', tomado: 'Tomado', publicado: 'Publicado' }[s] || s }
-function statusColor(s) { return { en_camino: '#10b981', arribado: '#f59e0b', tomado: '#3b82f6', publicado: '#94a3b8' }[s] || '#64748b' }
+function statusLabel(s) { return { en_camino: 'En camino', arribado: 'Arribado', tomado: 'Tomado' }[s] || s }
+function groupLabel(s) { return { en_camino: 'En Camino', arribado: 'Arribado', tomado: 'Tomado' }[s] || s }
+function statusColor(s) { return { en_camino: '#10b981', arribado: '#f59e0b', tomado: '#3b82f6' }[s] || '#64748b' }
 function initials(name) { return name.split(' ').map(w => w[0]).join('').slice(0, 2).toUpperCase() }
 
 const avatarColors = ['#6366f1', '#8b5cf6', '#ec4899', '#f43f5e', '#f97316', '#14b8a6', '#06b6d4', '#84cc16']
@@ -229,6 +200,10 @@ function avatarColor(name) {
   for (let i = 0; i < name.length; i++) h = name.charCodeAt(i) + ((h << 5) - h)
   return avatarColors[Math.abs(h) % avatarColors.length]
 }
+
+onMounted(() => {
+  fetchData()
+})
 </script>
 
 <style scoped>
@@ -347,7 +322,6 @@ function avatarColor(name) {
 .trip-card--en_camino { border-left: 3px solid #10b981; }
 .trip-card--arribado { border-left: 3px solid #f59e0b; }
 .trip-card--tomado { border-left: 3px solid #3b82f6; }
-.trip-card--publicado { border-left: 3px solid #94a3b8; }
 .trip-card--delayed { border-left-color: #ef4444 !important; }
 
 .trip-card__top { display: flex; align-items: center; justify-content: space-between; gap: .5rem; }
@@ -375,8 +349,6 @@ function avatarColor(name) {
 .badge--arribado .badge__dot { background: #f59e0b; }
 .badge--tomado { background: #eff6ff; color: #2563eb; border: 1px solid #bfdbfe; }
 .badge--tomado .badge__dot { background: #3b82f6; }
-.badge--publicado { background: #f8fafc; color: #64748b; border: 1px solid #e2e8f0; }
-.badge--publicado .badge__dot { background: #94a3b8; }
 
 .trip-card__addresses {
   display: flex; flex-direction: column; gap: .2rem;
