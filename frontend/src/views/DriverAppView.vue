@@ -93,6 +93,11 @@ const arrivedAtPickup = ref(false)
 const showArrivalToast = ref(false)
 let arrivalToastTimer = null
 
+// --- Auto-arrival at dropoff ---
+const arrivedAtDropoff = ref(false)
+const showDropoffArrivalToast = ref(false)
+let dropoffArrivalToastTimer = null
+
 // --- Cancellation toast ---
 const showCancelledToast = ref(false)
 let cancelledToastTimer = null
@@ -105,6 +110,8 @@ const handleOrderCancelled = ({ order_id }) => {
     currentIndex.value = 0
     progress.value = 0
     tripPhase.value = 'to_pickup'
+    arrivedAtPickup.value = false
+    arrivedAtDropoff.value = false
     MapService.clearRoutes()
     MapService.clearMarkers()
 
@@ -140,7 +147,18 @@ const handlePickupArrival = async () => {
     await updateStatus('arribado')
 }
 
-// Simulator: watch progress — trigger arrival when to_pickup route finishes
+const handleDropoffArrival = async () => {
+    if (arrivedAtDropoff.value) return
+    arrivedAtDropoff.value = true
+
+    showDropoffArrivalToast.value = true
+    if (dropoffArrivalToastTimer) clearTimeout(dropoffArrivalToastTimer)
+    dropoffArrivalToastTimer = setTimeout(() => { showDropoffArrivalToast.value = false }, 4000)
+
+    await updateStatus('arribado_a_entrega')
+}
+
+// Simulator: watch progress — trigger arrivals when each route phase finishes
 watch(progress, (val) => {
     if (
         val >= 100 &&
@@ -149,6 +167,14 @@ watch(progress, (val) => {
         !arrivedAtPickup.value
     ) {
         handlePickupArrival()
+    }
+    if (
+        val >= 100 &&
+        tripPhase.value === 'to_dropoff' &&
+        activeOrder.value?.status === 'en_camino' &&
+        !arrivedAtDropoff.value
+    ) {
+        handleDropoffArrival()
     }
 })
 
@@ -259,15 +285,18 @@ const updateStatus = async (status) => {
         if (res.data.status) {
             activeOrder.value.status = status
             if (status === 'arribado') {
-                // Arrived at pickup — stay on current route, stop simulation if running
                 stopSimulation()
                 progress.value = 0
                 currentIndex.value = 0
             } else if (status === 'en_camino') {
-                // Start delivery — reload route toward dropoff
                 progress.value = 0
                 currentIndex.value = 0
+                arrivedAtDropoff.value = false
                 loadRoute()
+            } else if (status === 'arribado_a_entrega') {
+                stopSimulation()
+                progress.value = 0
+                currentIndex.value = 0
             } else if (status === 'entregado') {
                 stopSimulation()
                 activeOrder.value = null
@@ -275,6 +304,8 @@ const updateStatus = async (status) => {
                 currentIndex.value = 0
                 progress.value = 0
                 tripPhase.value = 'to_pickup'
+                arrivedAtPickup.value = false
+                arrivedAtDropoff.value = false
                 loadAvailableOrders()
                 MapService.clearRoutes()
                 MapService.clearMarkers()
@@ -363,6 +394,17 @@ const startRealTracking = () => {
                 }
                 if (!isNaN(pickup.lat) && distanceMeters(newPos, pickup) < 80) {
                     handlePickupArrival()
+                }
+            }
+
+            // Auto-detect arrival at dropoff (within 80 m)
+            if (activeOrder.value?.status === 'en_camino' && !arrivedAtDropoff.value) {
+                const dropoff = {
+                    lat: parseFloat(activeOrder.value.drop_lat),
+                    lng: parseFloat(activeOrder.value.drop_lng)
+                }
+                if (!isNaN(dropoff.lat) && distanceMeters(newPos, dropoff) < 80) {
+                    handleDropoffArrival()
                 }
             }
         },
@@ -483,6 +525,7 @@ onUnmounted(() => {
     if (earningsInterval) clearInterval(earningsInterval)
     if (locationWatchId) navigator.geolocation.clearWatch(locationWatchId)
     if (arrivalToastTimer) clearTimeout(arrivalToastTimer)
+    if (dropoffArrivalToastTimer) clearTimeout(dropoffArrivalToastTimer)
     if (cancelledToastTimer) clearTimeout(cancelledToastTimer)
     document.removeEventListener('visibilitychange', onVisibilityChange)
     if (driverClientId.value) unsubscribe(`trips.${driverClientId.value}`)
@@ -635,7 +678,7 @@ const toggleSimulatorMode = () => {
       </div>
     </div>
 
-    <!-- ── ARRIVAL TOAST ──────────────────────────────────────── -->
+    <!-- ── ARRIVAL TOAST (pickup) ───────────────────────────────── -->
     <Transition name="toast-drop">
       <div
         v-if="showArrivalToast"
@@ -647,6 +690,22 @@ const toggleSimulatorMode = () => {
         <div>
           <p class="font-extrabold text-[15px] leading-tight">Llegaste al punto de recogida</p>
           <p class="text-emerald-100 text-[13px] mt-0.5">El cliente está esperando</p>
+        </div>
+      </div>
+    </Transition>
+
+    <!-- ── ARRIVAL TOAST (dropoff) ──────────────────────────────── -->
+    <Transition name="toast-drop">
+      <div
+        v-if="showDropoffArrivalToast"
+        class="absolute top-24 inset-x-4 z-40 flex items-center gap-4
+               bg-purple-500 text-white rounded-2xl px-5 py-4
+               shadow-[0_8px_32px_rgba(168,85,247,0.5)] pointer-events-none"
+      >
+        <span class="text-2xl flex-shrink-0">🏁</span>
+        <div>
+          <p class="font-extrabold text-[15px] leading-tight">Llegaste al punto de entrega</p>
+          <p class="text-purple-100 text-[13px] mt-0.5">Confirma la entrega cuando esté lista</p>
         </div>
       </div>
     </Transition>
@@ -829,12 +888,14 @@ const toggleSimulatorMode = () => {
                 'bg-amber-100 text-amber-700':     activeOrder.status === 'tomado',
                 'bg-blue-100 text-blue-700':       activeOrder.status === 'arribado',
                 'bg-emerald-100 text-emerald-700': activeOrder.status === 'en_camino',
+                'bg-purple-100 text-purple-700':   activeOrder.status === 'arribado_a_entrega',
               }"
             >
               {{
-                activeOrder.status === 'tomado'    ? '📍 En camino al origen' :
-                activeOrder.status === 'arribado'  ? '✅ En punto de recogida' :
-                activeOrder.status === 'en_camino' ? '🚚 En camino al destino' :
+                activeOrder.status === 'tomado'             ? '📍 En camino al origen' :
+                activeOrder.status === 'arribado'           ? '✅ En punto de recogida' :
+                activeOrder.status === 'en_camino'          ? '🚚 En camino al destino' :
+                activeOrder.status === 'arribado_a_entrega' ? '🏁 En punto de entrega' :
                 activeOrder.status.toUpperCase()
               }}
             </span>
@@ -935,7 +996,7 @@ const toggleSimulatorMode = () => {
 
             <!-- Contacto del receptor — solo cuando el viaje está aceptado -->
             <div
-              v-if="['tomado','arribado','en_camino'].includes(activeOrder.status) && activeOrder.receiver_phone"
+              v-if="['tomado','arribado','en_camino','arribado_a_entrega'].includes(activeOrder.status) && activeOrder.receiver_phone"
               class="flex items-center justify-between bg-gray-50 border border-gray-100 rounded-2xl px-5 py-4 mb-4 gap-3"
             >
               <div class="min-w-0">
@@ -984,19 +1045,22 @@ const toggleSimulatorMode = () => {
               </button>
             </template>
 
-            <!-- PASO 3 -->
+            <!-- PASO 3 — navegando al destino -->
             <template v-else-if="activeOrder.status === 'en_camino'">
+              <div class="sheet-btn-disabled">
+                {{ isSimulatorMode ? `Simulando… ${progress}%` : 'Navegando al punto de entrega…' }}
+              </div>
+            </template>
+
+            <!-- PASO 4 — en destino, confirmar entrega -->
+            <template v-else-if="activeOrder.status === 'arribado_a_entrega'">
               <button
-                v-if="!isSimulatorMode || progress >= 100"
                 ref="completeButtonRef"
                 @click="completeDelivery"
                 class="sheet-btn sheet-btn--green"
               >
                 Completar Entrega ✓
               </button>
-              <div v-else class="sheet-btn-disabled">
-                Simulando trayecto al destino...
-              </div>
             </template>
           </div>
         </div>

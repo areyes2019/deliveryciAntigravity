@@ -187,7 +187,7 @@ class OrderController extends BaseController
         }
 
         // Estados permitidos para cancelación por driver
-        $allowedStatuses = ['tomado', 'arribado', 'en_camino'];
+        $allowedStatuses = ['tomado', 'arribado'];
         if (!in_array($order['status'], $allowedStatuses)) {
             return $this->respondError('Cannot cancel order in current status: ' . $order['status']);
         }

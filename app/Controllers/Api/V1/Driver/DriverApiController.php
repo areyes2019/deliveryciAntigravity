@@ -219,9 +219,10 @@ class DriverApiController extends BaseController
         $newStatus = $input['status'] ?? null;
 
         $allowedTransitions = [
-            'tomado' => ['arribado'],
-            'arribado' => ['en_camino'],
-            'en_camino' => ['entregado'],
+            'tomado'             => ['arribado'],
+            'arribado'           => ['en_camino'],
+            'en_camino'          => ['arribado_a_entrega'],
+            'arribado_a_entrega' => ['entregado'],
         ];
 
         if (!isset($allowedTransitions[$order['status']]) || !in_array($newStatus, $allowedTransitions[$order['status']], true)) {

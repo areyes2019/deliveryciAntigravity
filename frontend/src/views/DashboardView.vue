@@ -179,7 +179,7 @@ onUnmounted(() => { stopPolling(); destroyMap() })
         />
 
         <div v-else class="activity-feed-container">
-          <ActivityFeed />
+          <ActivityFeed :orders="orders" :drivers="drivers" />
         </div>
 
 
