@@ -31,21 +31,7 @@ export function useRealtimeSync() {
         }
 
         if (driversRes.data.status) {
-          const newDrivers = driversRes.data.data
-
-          // Detectar cambios en conductores
-          newDrivers.forEach(newDriver => {
-            const old = drivers.value.find(d => d.id === newDriver.id)
-            if (old) {
-              const oldLat = parseFloat(old.current_lat)
-              const newLat = parseFloat(newDriver.current_lat)
-              if (!isNaN(oldLat) && !isNaN(newLat) && oldLat !== newLat) {
-                showToast(`📍 ${newDriver.name} se movió`, 'info')
-              }
-            }
-          })
-
-          drivers.value = newDrivers
+          drivers.value = driversRes.data.data
         }
 
         if (updateMapMarkers) updateMapMarkers()
