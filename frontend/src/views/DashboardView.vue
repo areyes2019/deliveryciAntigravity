@@ -33,7 +33,7 @@ const loading = ref(true)
 const viewMode = ref('map')
 const showCreateOrder = ref(false)
 const showCreateOrderManual = ref(false)
-const showFeed = ref(false)
+const showFeed = ref(true)
 
 const clientZones = ref([])
 const hasZones = computed(() => clientZones.value.length > 0)
@@ -68,7 +68,7 @@ const fetchDashboardData = async () => {
       clientZones.value = geofencesRes.data?.data ?? []
       const meRes = await api.get('/auth/me')
       stats.value.balance = parseFloat(meRes.data.data.client_balance) || 0
-      if (viewMode.value === 'map') {
+      if (viewMode.value === 'map' && !showFeed.value) {
         await nextTick()
         setTimeout(() => initDashboardMap({ orders: orders.value, drivers: drivers.value, isDriverEnRoute: d => isDriverEnRoute(d, orders.value) }), 800)
       }
@@ -148,7 +148,7 @@ onUnmounted(() => { stopPolling(); destroyMap() })
           <span class="map-command-bar__greeting">Panel operativo</span>
           <span class="map-command-bar__name">{{ userName }}</span>
           <label class="view-toggle" title="Cambiar vista">
-            <span class="view-toggle__icon">{{ showFeed ? '📋' : '🗺️' }}</span>
+            <span class="view-toggle__icon">{{ showFeed ? '🗺️' : '📋' }}</span>
             <input type="checkbox" v-model="showFeed" class="view-toggle__input" />
             <span class="view-toggle__slider"></span>
           </label>
