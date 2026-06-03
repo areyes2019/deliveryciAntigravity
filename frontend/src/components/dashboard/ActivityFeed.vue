@@ -18,6 +18,42 @@
       </div>
     </header>
 
+    <!-- Acciones rápidas (movido desde DashboardMap) -->
+    <div class="ops-panel__quickactions">
+      <span class="quickactions__label">Acciones rápidas</span>
+      <div class="action-pill action-pill--stat">
+        <span class="action-pill__dot action-pill__dot--pulse"></span>
+        {{ stats.activeOrders }} en cola
+      </div>
+      <div class="action-pill action-pill--ghost">
+        <span class="action-pill__icon">🏎️</span>
+        {{ stats.totalDrivers }} online
+      </div>
+      <button
+        type="button"
+        class="action-pill action-pill--ai"
+        :class="{ 'action-pill--disabled': !hasZones }"
+        :disabled="!hasZones"
+        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
+        @click="hasZones && emit('create-order')"
+      >
+        <span class="action-pill__icon">✨</span> Generar con IA
+      </button>
+      <button
+        type="button"
+        class="action-pill action-pill--manual"
+        :class="{ 'action-pill--disabled': !hasZones }"
+        :disabled="!hasZones"
+        :title="!hasZones ? 'Debes configurar al menos una zona de operación antes de generar viajes' : ''"
+        @click="hasZones && emit('create-order-manual')"
+      >
+        <span class="action-pill__icon">📝</span> Manual
+      </button>
+      <div v-if="!hasZones" class="action-pill action-pill--warning" role="status">
+        Sin zonas configuradas
+      </div>
+    </div>
+
     <div class="ops-panel__toolbar">
       <div class="ops-panel__search">
         <svg class="ops-panel__search-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -251,11 +287,13 @@ import { ref, computed, onUnmounted, watch } from 'vue'
 import api from '../../api'
 
 const props = defineProps({
-  orders: { type: Array, default: () => [] },
-  drivers: { type: Array, default: () => [] }
+  orders:   { type: Array,   default: () => [] },
+  drivers:  { type: Array,   default: () => [] },
+  stats:    { type: Object,  default: () => ({ activeOrders: 0, totalDrivers: 0 }) },
+  hasZones: { type: Boolean, default: false }
 })
 
-const emit = defineEmits(['accept-trip', 'cancel-trip'])
+const emit = defineEmits(['accept-trip', 'cancel-trip', 'create-order', 'create-order-manual'])
 
 // ── Reloj global para elapsed_time en tiempo real ──
 const globalClock = ref(Date.now())
@@ -512,6 +550,104 @@ function avatarColor(name) {
   animation: live-pulse 1.5s ease-in-out infinite;
 }
 @keyframes live-pulse { 0%,100%{opacity:1;transform:scale(1)} 50%{opacity:.4;transform:scale(.8)} }
+
+/* ═══ Barra de acciones rápidas ═══ */
+.ops-panel__quickactions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.4rem 0.55rem;
+  padding: 0.55rem 1.25rem;
+  background: #fff;
+  border-bottom: 1px solid #e2e8f0;
+  flex-shrink: 0;
+}
+.quickactions__label {
+  font-size: 0.6rem;
+  font-weight: 800;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: #94a3b8;
+  margin-right: 0.15rem;
+}
+.action-pill {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.4rem;
+  padding: 0.35rem 0.8rem;
+  border-radius: 999px;
+  font-size: 0.75rem;
+  font-weight: 600;
+  border: 1px solid #e2e8f0;
+  background: #f8fafc;
+  color: #334155;
+  white-space: nowrap;
+  transition: transform 0.2s, box-shadow 0.2s;
+}
+.action-pill__icon { font-size: 0.85rem; line-height: 1; }
+.action-pill__dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.action-pill__dot--pulse {
+  background: #4ade80;
+  animation: quickaction-pulse 2s infinite;
+}
+@keyframes quickaction-pulse {
+  0%   { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74,222,128,0.7); }
+  70%  { transform: scale(1);    box-shadow: 0 0 0 8px rgba(74,222,128,0); }
+  100% { transform: scale(0.95); box-shadow: 0 0 0 0 rgba(74,222,128,0); }
+}
+.action-pill--stat {
+  background: linear-gradient(135deg, #4f46e5, #6366f1);
+  color: #fff;
+  border-color: transparent;
+  box-shadow: 0 3px 10px rgba(79,70,229,0.3);
+}
+.action-pill--ghost {
+  background: #fff;
+  color: #0f172a;
+  border-color: #e2e8f0;
+}
+.action-pill--ai {
+  background: linear-gradient(135deg, #6366f1, #8b5cf6);
+  color: #fff;
+  border-color: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 3px 10px rgba(99,102,241,0.3);
+}
+.action-pill--ai:hover:not(.action-pill--disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(99,102,241,0.4);
+}
+.action-pill--manual {
+  background: linear-gradient(135deg, #059669, #10b981);
+  color: #fff;
+  border-color: transparent;
+  cursor: pointer;
+  font-family: inherit;
+  box-shadow: 0 3px 10px rgba(5,150,105,0.3);
+}
+.action-pill--manual:hover:not(.action-pill--disabled) {
+  transform: translateY(-1px);
+  box-shadow: 0 5px 14px rgba(5,150,105,0.4);
+}
+.action-pill--disabled {
+  background: #9ca3af !important;
+  box-shadow: none !important;
+  cursor: not-allowed;
+  opacity: 0.7;
+}
+.action-pill--warning {
+  background: #fffbeb;
+  color: #b45309;
+  border-color: #fde68a;
+  font-size: 0.7rem;
+  font-weight: 700;
+}
 
 .ops-panel__toolbar {
   display: flex; align-items: center; gap: .75rem;

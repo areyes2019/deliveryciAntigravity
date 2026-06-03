@@ -170,16 +170,17 @@ onUnmounted(() => { stopPolling(); destroyMap() })
           @select-order="handleSelectOrder"
         />
 
-        <DashboardMap
-          v-if="!showFeed"
-          :stats="stats"
-          :has-zones="hasZones"
-          @create-order="showCreateOrder = true"
-          @create-order-manual="showCreateOrderManual = true"
-        />
+        <DashboardMap v-if="!showFeed" />
 
         <div v-else class="activity-feed-container">
-          <ActivityFeed :orders="orders" :drivers="drivers" />
+          <ActivityFeed
+            :orders="orders"
+            :drivers="drivers"
+            :stats="stats"
+            :has-zones="hasZones"
+            @create-order="showCreateOrder = true"
+            @create-order-manual="showCreateOrderManual = true"
+          />
         </div>
 
 
