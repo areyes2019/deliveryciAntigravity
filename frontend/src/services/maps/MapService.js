@@ -105,7 +105,7 @@ class MapService {
    * Usar solo cuando se necesita acceso directo a la API nativa.
    */
   getNativeMap() {
-    return this.provider.map;
+    return this.provider ? this.provider.map : null;
   }
 }
 

@@ -7,12 +7,10 @@ const refreshInterval = ref(null)
 export function useRealtimeSync() {
   const startPolling = ({ role, orders, drivers, stats, showToast, updateMapMarkers }) => {
     const silentUpdate = async () => {
+      // Orders y drivers se actualizan de forma independiente para que un fallo
+      // en uno no bloquee la actualización del otro.
       try {
-        const [ordersRes, driversRes] = await Promise.all([
-          api.get('/orders'),
-          api.get('/drivers')
-        ])
-
+        const ordersRes = await api.get('/orders')
         if (ordersRes.data.status) {
           const newOrders = ordersRes.data.data
 
@@ -29,23 +27,28 @@ export function useRealtimeSync() {
             ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)
           ).length
         }
+      } catch (error) {
+        console.error('Error en silent update (orders):', error)
+      }
 
+      try {
+        const driversRes = await api.get('/drivers')
         if (driversRes.data.status) {
           drivers.value = driversRes.data.data
         }
-
-        if (updateMapMarkers) updateMapMarkers()
       } catch (error) {
-        console.error('Error en silent update:', error)
+        console.error('Error en silent update (drivers):', error)
       }
+
+      if (updateMapMarkers) updateMapMarkers()
     }
 
-    // Iniciar polling cada 3 segundos solo para client_admin
+    // Polling cada 5 segundos como fallback cuando Pusher no está disponible
     refreshInterval.value = setInterval(() => {
       if (role.value === 'client_admin') {
         silentUpdate()
       }
-    }, 3000)
+    }, 5000)
 
     // Limpiar al desmontar
     onUnmounted(() => {
@@ -65,18 +68,29 @@ export function useRealtimeSync() {
     }
   }
 
-  const setupRealtimeListeners = ({ clientId, onOrderUpdated, onDriverMoved }) => {
+  const setupRealtimeListeners = ({ clientId, onOrderCancelled, onNewTrip, onTripTaken, onTripUpdated, onDriverLocation }) => {
     if (!clientId) return
 
     const channel = subscribe(`orders.${clientId}`)
-    channel.bind('order-updated', (data) => {
-      if (onOrderUpdated) onOrderUpdated(data)
+    channel.bind('order-cancelled', (data) => {
+      if (onOrderCancelled) onOrderCancelled(data)
     })
 
-    const driverChannel = subscribe(`trips.${clientId}`)
-    driverChannel.bind('driver-moved', (data) => {
-      if (onDriverMoved) onDriverMoved(data)
+    const tripsChannel = subscribe(`trips.${clientId}`)
+    tripsChannel.bind('new-trip', (data) => {
+      if (onNewTrip) onNewTrip(data)
     })
+    tripsChannel.bind('trip-taken', (data) => {
+      if (onTripTaken) onTripTaken(data)
+    })
+    tripsChannel.bind('trip-updated', (data) => {
+      if (onTripUpdated) onTripUpdated(data)
+    })
+    if (onDriverLocation) {
+      tripsChannel.bind('driver-location', (data) => {
+        onDriverLocation(data)
+      })
+    }
 
     // Limpiar listeners al desmontar
     onUnmounted(() => {
@@ -84,7 +98,7 @@ export function useRealtimeSync() {
       unsubscribe(`trips.${clientId}`)
     })
 
-    return { channel, driverChannel }
+    return { channel, tripsChannel }
   }
 
   return {

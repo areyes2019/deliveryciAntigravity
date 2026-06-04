@@ -289,6 +289,17 @@ class DriverApiController extends BaseController
             return $this->respondError($e->getMessage());
         }
 
+        // Notificar cambio de estado en tiempo real al panel del cliente
+        PusherService::trigger(
+            'trips.' . $order['client_id'],
+            'trip-updated',
+            [
+                'trip_id'   => (int) $id,
+                'driver_id' => $driver['id'],
+                'status'    => $newStatus,
+            ]
+        );
+
         // Post-commit: notificar al driver con sus ganancias actualizadas en tiempo real
         if ($newStatus === 'entregado' && $walletService !== null) {
             try {
@@ -338,6 +349,16 @@ class DriverApiController extends BaseController
             'current_lat' => $input['lat'],
             'current_lng' => $input['lng']
         ]);
+
+        PusherService::trigger(
+            'trips.' . $driver['client_id'],
+            'driver-location',
+            [
+                'driver_id' => (int) $driver['id'],
+                'lat'       => (float) $input['lat'],
+                'lng'       => (float) $input['lng'],
+            ]
+        );
 
         return $this->respondSuccess('Location updated successfully.');
     }

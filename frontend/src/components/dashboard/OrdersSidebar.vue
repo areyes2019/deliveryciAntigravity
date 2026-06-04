@@ -25,12 +25,12 @@
     </div>
 
     <!-- Scheduled Trips Section -->
-    <div class="sidebar-section sidebar-section--divider" v-if="scheduledOrders.length > 0">
+    <div class="sidebar-section sidebar-section--divider sidebar-section--grow" v-if="scheduledOrders.length > 0">
       <div class="sidebar-header">
         <h3><span class="sidebar-header__icon" aria-hidden="true">📅</span> Programados</h3>
         <span class="badge scheduled">{{ scheduledOrders.length }}</span>
       </div>
-      <div class="sidebar-list scrollable">
+      <div class="sidebar-list scrollable sidebar-list--fill">
         <OrderCard
           v-for="order in scheduledOrders"
           :key="order.id"
@@ -42,31 +42,6 @@
       </div>
     </div>
 
-    <!-- Active Trips Section -->
-    <div class="sidebar-section sidebar-section--divider sidebar-section--grow">
-      <div class="sidebar-header">
-        <h3><span class="sidebar-header__icon" aria-hidden="true">🛵</span> Activos</h3>
-        <span class="badge active-now" v-if="activeOrdersList.length > 0">{{ activeOrdersList.length }}</span>
-      </div>
-      <div class="sidebar-list scrollable sidebar-list--fill">
-        <div v-if="activeOrdersList.length > 0">
-          <OrderCard
-            v-for="order in activeOrdersList"
-            :key="order.id"
-            :order="order"
-            variant="active"
-            :is-active="selectedOrder?.id === order.id"
-            :badge-text="statusLabel(order.status)"
-            :badge-class="order.status"
-            :driver-name="getDriverName(order.driver_id)"
-            @click="$emit('select-order', order)"
-          />
-        </div>
-        <div class="sidebar-empty mini" v-else>
-          No hay viajes activos.
-        </div>
-      </div>
-    </div>
   </div>
 </template>
 
@@ -82,10 +57,6 @@ const props = defineProps({
     type: Array,
     default: () => []
   },
-  activeOrdersList: {
-    type: Array,
-    default: () => []
-  },
   selectedOrder: {
     type: Object,
     default: null
@@ -98,20 +69,6 @@ const props = defineProps({
 
 defineEmits(['select-order'])
 
-const statusLabel = (status) => {
-  const map = {
-    tomado: 'Aceptado',
-    arribado: 'En Recogida',
-    en_camino: 'En Camino'
-  }
-  return map[status] || status
-}
-
-const getDriverName = (driverId) => {
-  if (!driverId) return ''
-  const driver = props.drivers.find(d => String(d.id) === String(driverId))
-  return driver?.name || 'Asignado'
-}
 
 const formatScheduled = (scheduledAt) => {
   if (!scheduledAt) return ''
@@ -133,12 +90,16 @@ const formatScheduled = (scheduledAt) => {
   flex-shrink: 0;
   border-right: 1px solid rgba(148, 163, 184, 0.35);
   box-shadow: 8px 0 24px -18px rgba(15, 23, 42, 0.35);
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
 }
 
 .sidebar-section {
-    display: flex;
-    flex-direction: column;
-    max-height: 50%;
+  display: flex;
+  flex-direction: column;
+  flex-shrink: 0;
 }
 
 .sidebar-section--divider {
@@ -156,6 +117,7 @@ const formatScheduled = (scheduledAt) => {
   flex: 1;
   min-height: 0;
 }
+
 
 .sidebar-list.scrollable {
     overflow-y: auto;
@@ -199,7 +161,7 @@ const formatScheduled = (scheduledAt) => {
 
 .sidebar-header .badge { padding: 0.2rem 0.6rem; border-radius: 999px; font-size: 0.75rem; font-weight: 800; }
 .sidebar-header .badge.pending { background: #FEF3C7; color: #92400E; }
-.sidebar-header .badge.active-now { background: #DBEAFE; color: #1E40AF; }
+
 .sidebar-header .badge.scheduled { background: #F3E8FF; color: #6D28D9; }
 
 .sidebar-list {

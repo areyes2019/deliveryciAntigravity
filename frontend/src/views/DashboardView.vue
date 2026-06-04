@@ -26,7 +26,7 @@ const { orders, selectedOrder, routeInfo, selectOrder, clearSelection, cancelOrd
 const { drivers, activeDrivers } = useDrivers()
 const { toasts, showToast } = useToast()
 const { isDriverEnRoute, initDashboardMap, resizeMap, updateMapMarkers, focusDriver, destroyMap } = useDashboardMap()
-const { startPolling, stopPolling } = useRealtimeSync()
+const { startPolling, stopPolling, setupRealtimeListeners } = useRealtimeSync()
 
 const stats = ref({ totalClients: 0, totalDrivers: 0, activeOrders: 0, balance: 0, fleetBalance: 0 })
 const loading = ref(true)
@@ -117,9 +117,44 @@ watch(showFeed, (newVal) => {
   }
 }, { flush: 'post' })
 
-onMounted(() => {
-  fetchDashboardData()
+onMounted(async () => {
+  await fetchDashboardData()
+
   startPolling({ role, orders, drivers, stats, showToast, updateMapMarkers: () => updateMapMarkers(mapCtx()) })
+
+  if (role.value === 'client_admin') {
+    const clientId = authStore.user?.client?.id ?? authStore.user?.client_id
+    if (clientId) {
+      setupRealtimeListeners({
+        clientId,
+        onNewTrip: async () => {
+          await fetchDashboardData()
+          updateMapMarkers(mapCtx())
+        },
+        onTripTaken: async () => {
+          await fetchDashboardData()
+          updateMapMarkers(mapCtx())
+        },
+        onTripUpdated: async () => {
+          await fetchDashboardData()
+          updateMapMarkers(mapCtx())
+        },
+        onOrderCancelled: async ({ order_id }) => {
+          if (selectedOrder.value?.id === order_id) clearSelection()
+          await fetchDashboardData()
+          updateMapMarkers(mapCtx())
+        },
+        onDriverLocation: ({ driver_id, lat, lng }) => {
+          const driver = drivers.value.find(d => d.id === driver_id)
+          if (driver) {
+            driver.current_lat = lat
+            driver.current_lng = lng
+            updateMapMarkers(mapCtx())
+          }
+        }
+      })
+    }
+  }
 })
 
 onUnmounted(() => { stopPolling(); destroyMap() })

@@ -309,6 +309,21 @@ export default class GoogleProvider extends BaseProvider {
   _normalizeIcon(icon) {
     if (!icon || typeof google === 'undefined') return null;
 
+    // Google Maps SymbolPath format: { path, fillColor, scale, anchor, ... }
+    if (typeof icon === 'object' && icon.path) {
+      return {
+        ...icon,
+        anchor: Array.isArray(icon.anchor)
+          ? new google.maps.Point(icon.anchor[0], icon.anchor[1])
+          : icon.anchor instanceof google.maps.Point
+            ? icon.anchor
+            : undefined,
+        labelOrigin: Array.isArray(icon.labelOrigin)
+          ? new google.maps.Point(icon.labelOrigin[0], icon.labelOrigin[1])
+          : icon.labelOrigin
+      };
+    }
+
     if (typeof icon === 'object' && icon.url) {
       return {
         ...icon,
