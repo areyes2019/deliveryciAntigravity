@@ -34,7 +34,26 @@ export function useRealtimeSync() {
       try {
         const driversRes = await api.get('/drivers')
         if (driversRes.data.status) {
-          drivers.value = driversRes.data.data
+          const freshDrivers = driversRes.data.data
+          freshDrivers.forEach(fresh => {
+            const idx = drivers.value.findIndex(d => d.id === fresh.id)
+            if (idx !== -1) {
+              const existing = drivers.value[idx]
+              // Si Pusher actualizó este conductor en los últimos 10 s,
+              // conservar sus coordenadas en tiempo real en lugar de las de la DB.
+              const pusherIsRecent = existing._pusherTs &&
+                (Date.now() - existing._pusherTs) < 10_000
+              drivers.value[idx] = {
+                ...fresh,
+                current_lat: pusherIsRecent ? existing.current_lat : fresh.current_lat,
+                current_lng: pusherIsRecent ? existing.current_lng : fresh.current_lng,
+                _pusherTs: existing._pusherTs ?? null,
+              }
+            } else {
+              drivers.value.push(fresh)
+            }
+          })
+          drivers.value = drivers.value.filter(d => freshDrivers.some(f => f.id === d.id))
         }
       } catch (error) {
         console.error('Error en silent update (drivers):', error)

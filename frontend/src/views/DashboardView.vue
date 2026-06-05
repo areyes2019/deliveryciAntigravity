@@ -149,6 +149,7 @@ onMounted(async () => {
           if (driver) {
             driver.current_lat = lat
             driver.current_lng = lng
+            driver._pusherTs = Date.now()
             updateMapMarkers(mapCtx())
           }
         }

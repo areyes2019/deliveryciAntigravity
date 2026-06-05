@@ -161,18 +161,33 @@ export default class GoogleProvider extends BaseProvider {
     return marker;
   }
 
+  _animateMarker(marker, to, durationMs = 600) {
+    const from = marker.getPosition()
+    if (!from) { marker.setPosition(to); return }
+    const startLat = from.lat()
+    const startLng = from.lng()
+    const startTime = performance.now()
+    const step = (now) => {
+      const t = Math.min((now - startTime) / durationMs, 1)
+      marker.setPosition({
+        lat: startLat + (to.lat - startLat) * t,
+        lng: startLng + (to.lng - startLng) * t,
+      })
+      if (t < 1) requestAnimationFrame(step)
+    }
+    requestAnimationFrame(step)
+  }
+
   updateMarker(id, position, options = {}) {
     if (!this.markers) return;
     const marker = this.markers.get(id);
     const coords = this._parsePosition(position);
     if (marker && coords) {
-      marker.setPosition(coords);
-      // Optionally update the icon if provided
+      this._animateMarker(marker, coords);
       if (options.icon) {
           marker.setIcon(this._normalizeIcon(options.icon));
       }
     } else if (!marker && coords) {
-      // Fallback: if marker doesn't exist, create it
       this.addMarker(id, coords, options);
     }
   }

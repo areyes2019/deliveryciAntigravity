@@ -175,7 +175,7 @@ export function useDashboardMap() {
       return
     }
 
-    MapService.flyTo([lat, lng], 16)
+    MapService.centerOn([lat, lng], 16)
 
     // Buscar pedido activo de este conductor
     const activeOrder = orders.find(o =>
