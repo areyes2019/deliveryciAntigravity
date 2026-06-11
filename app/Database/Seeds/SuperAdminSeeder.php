@@ -10,17 +10,29 @@ class SuperAdminSeeder extends Seeder
     public function run()
     {
         $userModel = new UserModel();
-        
-        $data = [
-            'name'      => 'Super Admin',
-            'email'     => 'admin@delivery.com',
-            'password'  => '12345678',
-            'role'      => 'superadmin',
-            'is_active' => 1
+
+        $users = [
+            [
+                'name'     => 'Super Admin',
+                'email'    => 'admin@delivery.com',
+                'password' => '12345678',
+                'role'     => 'superadmin',
+            ],
+            [
+                'name'     => 'Abdias Reyes',
+                'email'    => 'reyesabdias@gmail.com',
+                'password' => '12345678',
+                'role'     => 'superadmin',
+            ],
         ];
 
-        if (!$userModel->where('email', $data['email'])->first()) {
-            $userModel->insert($data);
+        foreach ($users as $data) {
+            if (!$userModel->where('email', $data['email'])->first()) {
+                $userModel->insert($data);
+                echo "Usuario creado: {$data['email']}\n";
+            } else {
+                echo "Ya existe: {$data['email']}\n";
+            }
         }
     }
 }
