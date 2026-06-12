@@ -161,21 +161,44 @@ export default class GoogleProvider extends BaseProvider {
     return marker;
   }
 
-  _animateMarker(marker, to, durationMs = 600) {
+  _animateMarker(marker, to) {
+    // Cancel any in-progress animation for this marker
+    if (marker._animFrame) {
+      cancelAnimationFrame(marker._animFrame)
+      marker._animFrame = null
+    }
+
     const from = marker.getPosition()
     if (!from) { marker.setPosition(to); return }
+
+    // Dynamic duration: use real interval between GPS updates (clamped 1s–5s)
+    const now = performance.now()
+    const duration = marker._lastUpdateTs
+      ? Math.min(5000, Math.max(1000, now - marker._lastUpdateTs))
+      : 2000
+    marker._lastUpdateTs = now
+
     const startLat = from.lat()
     const startLng = from.lng()
-    const startTime = performance.now()
-    const step = (now) => {
-      const t = Math.min((now - startTime) / durationMs, 1)
+    const startTime = now
+
+    // Smoothstep easing: ease-in-out
+    const ease = t => t * t * (3 - 2 * t)
+
+    const step = (ts) => {
+      const rawT = Math.min((ts - startTime) / duration, 1)
+      const t = ease(rawT)
       marker.setPosition({
         lat: startLat + (to.lat - startLat) * t,
         lng: startLng + (to.lng - startLng) * t,
       })
-      if (t < 1) requestAnimationFrame(step)
+      if (rawT < 1) {
+        marker._animFrame = requestAnimationFrame(step)
+      } else {
+        marker._animFrame = null
+      }
     }
-    requestAnimationFrame(step)
+    marker._animFrame = requestAnimationFrame(step)
   }
 
   updateMarker(id, position, options = {}) {
