@@ -325,7 +325,6 @@ function _bindTracking() {
     // LOG 4 — Estado del panel al momento del evento
     console.log('[TRACKING-AUDIT] selectedTrip.value =', selectedTrip.value?.id, '| refMapProvider.map =', !!refMapProvider.map)
     if (!selectedTrip.value) { console.warn('[TRACKING-AUDIT] ❌ RETURN: selectedTrip es null'); return }
-    if (!refMapProvider.map)  { console.warn('[TRACKING-AUDIT] ❌ RETURN: refMapProvider.map es null (mapa no listo)'); return }
 
     // LOG 5 — Búsqueda de la orden en props.orders
     const rawOrder = props.orders.find(o => o.id === selectedTrip.value.id)
@@ -344,10 +343,14 @@ function _bindTracking() {
     console.log(`[TRACKING-AUDIT] Coordenadas: lat=${la} lng=${lo} isNaN=${isNaN(la)} esZero=${la === 0}`)
     if (isNaN(la) || la === 0) { console.warn('[TRACKING-AUDIT] ❌ RETURN: coordenadas inválidas'); return }
 
-    // LOG 8 — Llamada a updateMarker
-    console.log(`[TRACKING-AUDIT] ✅ Llamando updateMarker con [${la}, ${lo}]`)
-    refMapProvider.updateMarker('driver-tracking', [la, lo], { icon: MOTO_ICON, popup: `🏍️ ${selectedTrip.value.driver_name}` })
-    console.log('[TRACKING-AUDIT] ✅ updateMarker ejecutado')
+    // LOG 8 — Guardar en pizarra y dibujar si el mapa ya está listo
+    _lastKnownDriverPos.value = { lat: la, lng: lo }
+    if (refMapProvider.map) {
+      refMapProvider.updateMarker('driver-tracking', [la, lo], { icon: MOTO_ICON, popup: `🏍️ ${selectedTrip.value.driver_name}` })
+      console.log(`[TRACKING-AUDIT] ✅ updateMarker ejecutado [${la}, ${lo}]`)
+    } else {
+      console.log(`[TRACKING-AUDIT] 📦 Posición guardada en buffer (mapa aún no listo): [${la}, ${lo}]`)
+    }
   }
 
   channel.bind('driver-location', _driverHandler)
@@ -391,6 +394,13 @@ async function initRefMap(trip) {
     const driver = props.drivers.find(d => String(d.id) === String(rawOrder.driver_id))
     if (driver) _updateDriverMarker(driver, trip.driver_name)
   }
+
+  // ── Aplicar posición del buffer si llegó un evento Pusher durante la inicialización ──
+  if (_lastKnownDriverPos.value) {
+    const { lat, lng } = _lastKnownDriverPos.value
+    refMapProvider.updateMarker('driver-tracking', [lat, lng], { icon: MOTO_ICON, popup: `🏍️ ${trip.driver_name}` })
+    console.log('[TRACKING-AUDIT] ✅ Posición del buffer aplicada al mapa:', _lastKnownDriverPos.value)
+  }
 }
 
 function _updateDriverMarker(driver, driverName) {
@@ -413,6 +423,7 @@ const searchQuery = ref('')
 const activeFilter = ref('all')
 const selectedTrip = ref(null)
 const showDetailPanel = ref(false)
+const _lastKnownDriverPos = ref(null)   // "pizarra" de posición: persiste aunque el mapa no esté listo
 
 // Computed que extrae exactamente lat/lng del conductor activo.
 // Vue crea dependencias precisas sobre current_lat y current_lng → el watch
@@ -432,26 +443,31 @@ const _trackedDriverLocation = computed(() => {
 })
 
 watch(_trackedDriverLocation, (location) => {
-  if (!location || !refMapProvider.map) return
+  if (!location) return
   const lat = parseFloat(location.lat)
   const lng = parseFloat(location.lng)
   if (!isNaN(lat) && lat !== 0) {
-    refMapProvider.updateMarker('driver-tracking', [lat, lng], { icon: MOTO_ICON, popup: `🏍️ ${location.name}` })
+    _lastKnownDriverPos.value = { lat, lng }
+    if (refMapProvider.map) {
+      refMapProvider.updateMarker('driver-tracking', [lat, lng], { icon: MOTO_ICON, popup: `🏍️ ${location.name}` })
+    }
   }
 })
 
-function openDetail(trip) {
-  _unbindTracking()           // limpia handler previo si había
+async function openDetail(trip) {
+  _unbindTracking()
+  _lastKnownDriverPos.value = null    // limpia la pizarra del viaje anterior
   selectedTrip.value = trip
   showDetailPanel.value = true
-  initRefMap(trip)
-  _bindTracking()             // escucha directa a Pusher para este viaje
+  await initRefMap(trip)              // espera a que el mapa esté completamente listo
+  _bindTracking()                     // ahora el mapa está listo: ningún evento se pierde
 }
 
 function closeDetail() {
   _unbindTracking()
   selectedTrip.value = null
   showDetailPanel.value = false
+  _lastKnownDriverPos.value = null
   refMapProvider.destroy()
 }
 
