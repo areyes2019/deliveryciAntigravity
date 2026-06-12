@@ -148,9 +148,9 @@ const form = ref({
   scheduled_at: null
 })
 
-// ─── Template refs for the two address inputs ───────────────────────────────
-const pickupInput = ref(null)
-const dropInput = ref(null)
+// ─── Template refs for the two address containers ───────────────────────────
+const pickupContainer = ref(null)
+const dropContainer = ref(null)
 
 const canAffordOrder = computed(() => userBalance.value >= 1)
 
@@ -196,8 +196,8 @@ const computeZoneBounds = () => {
   return hasPoints ? bounds : null
 }
 
-// ─── Attach Google Places Autocomplete to an input ───────────────────────────
-const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
+// ─── Attach PlaceAutocompleteElement to a container div ──────────────────────
+const attachAutocomplete = (containerEl, addressField, latField, lngField) => {
   if (!window.google?.maps?.places) {
     console.warn('Places API no disponible aun.')
     return
@@ -211,36 +211,37 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
   )
   const activeBounds = dynamicBounds ?? celayaBounds
 
-  const autocomplete = new google.maps.places.Autocomplete(inputEl, {
+  const placeAuto = new google.maps.places.PlaceAutocompleteElement({
     componentRestrictions: { country: 'mx' },
-    fields: ['formatted_address', 'geometry', 'name', 'place_id', 'types'],
     types: ['geocode', 'establishment'],
-    bounds: activeBounds,
-    strictBounds: !!dynamicBounds
+    locationBias: activeBounds,
+    ...(dynamicBounds ? { locationRestriction: activeBounds } : {})
   })
+  placeAuto.style.width = '100%'
+  containerEl.appendChild(placeAuto)
 
-  autocomplete.addListener('place_changed', () => {
-    const place = autocomplete.getPlace()
+  placeAuto.addEventListener('gmp-placeselect', async (event) => {
+    const place = event.placePrediction.toPlace()
+    await place.fetchFields(['formattedAddress', 'location', 'displayName', 'types', 'id'])
 
-    // Si es un negocio, usar el nombre + direccion formateada
-    const isEstablishment = place.types?.includes('establishment') || 
+    const isEstablishment = place.types?.includes('establishment') ||
                             place.types?.includes('point_of_interest') ||
                             place.types?.includes('food')
-    
+
     let address
-    if (isEstablishment && place.name && place.formatted_address) {
-      address = `${place.name}, ${place.formatted_address}`
+    if (isEstablishment && place.displayName && place.formattedAddress) {
+      address = `${place.displayName}, ${place.formattedAddress}`
     } else {
-      address = place.formatted_address || place.name || inputEl.value
+      address = place.formattedAddress || place.displayName || ''
     }
     form.value[addressField] = address
 
-    if (place.geometry?.location) {
-      form.value[latField] = place.geometry.location.lat()
-      form.value[lngField] = place.geometry.location.lng()
+    if (place.location) {
+      form.value[latField] = place.location.lat()
+      form.value[lngField] = place.location.lng()
       console.log(`✅ ${addressField} con coords:`, form.value[latField], form.value[lngField])
     } else {
-      console.warn('⚠️ Geometry no disponible, usando Geocoder como fallback...')
+      console.warn('⚠️ Location no disponible, usando Geocoder como fallback...')
       const geocoder = new google.maps.Geocoder()
       geocoder.geocode({ address }, (results, status) => {
         if (status === 'OK' && results[0]) {
@@ -252,6 +253,14 @@ const attachAutocomplete = (inputEl, addressField, latField, lngField) => {
         }
       })
     }
+  })
+
+  // Clear coords when user edits the input manually
+  placeAuto.addEventListener('input', () => {
+    form.value[addressField] = ''
+    form.value[latField] = null
+    form.value[lngField] = null
+    form.value.distance_km = null
   })
 }
 
@@ -430,11 +439,11 @@ onMounted(async () => {
   }
 
   setTimeout(() => {
-    if (pickupInput.value) {
-      attachAutocomplete(pickupInput.value, 'pickup_address', 'pickup_lat', 'pickup_lng')
+    if (pickupContainer.value) {
+      attachAutocomplete(pickupContainer.value, 'pickup_address', 'pickup_lat', 'pickup_lng')
     }
-    if (dropInput.value) {
-      attachAutocomplete(dropInput.value, 'drop_address', 'drop_lat', 'drop_lng')
+    if (dropContainer.value) {
+      attachAutocomplete(dropContainer.value, 'drop_address', 'drop_lat', 'drop_lng')
     }
 
     if (window.google?.maps) {
@@ -486,30 +495,14 @@ onMounted(async () => {
             <div class="form-group">
               <label>📍 Direccion de Recogida</label>
               <div class="input-wrapper">
-                <input
-                  ref="pickupInput"
-                  v-model="form.pickup_address"
-                  type="text"
-                  placeholder="Escribe para buscar..."
-                  autocomplete="off"
-                  required
-                  @input="form.pickup_lat = null; form.pickup_lng = null; form.distance_km = null"
-                />
+                <div ref="pickupContainer" class="place-autocomplete-wrapper"></div>
                 <span v-if="form.pickup_lat" class="coord-badge">✓ Ubicado</span>
               </div>
             </div>
             <div class="form-group">
               <label>🏁 Direccion de Entrega</label>
               <div class="input-wrapper">
-                <input
-                  ref="dropInput"
-                  v-model="form.drop_address"
-                  type="text"
-                  placeholder="Escribe para buscar..."
-                  autocomplete="off"
-                  required
-                  @input="form.drop_lat = null; form.drop_lng = null; form.distance_km = null"
-                />
+                <div ref="dropContainer" class="place-autocomplete-wrapper"></div>
                 <span v-if="form.drop_lat" class="coord-badge">✓ Ubicado</span>
               </div>
             </div>
@@ -1106,20 +1099,20 @@ onMounted(async () => {
 .btn-publish:hover:not(:disabled) { transform: translateY(-1px); box-shadow: 0 6px 16px rgba(5, 150, 105, 0.4); }
 .btn-publish:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-:deep(.pac-container) {
-  border-radius: 10px !important;
-  box-shadow: 0 10px 25px rgba(0,0,0,0.12) !important;
-  border: 1px solid #E5E7EB !important;
-  font-family: inherit !important;
-  margin-top: 4px !important;
+.place-autocomplete-wrapper {
+  width: 100%;
+  display: block;
 }
-:deep(.pac-item) {
-  padding: 0.6rem 1rem !important;
-  font-size: 0.85rem !important;
-  cursor: pointer !important;
+:deep(gmp-place-autocomplete) {
+  width: 100%;
+  display: block;
+  font-family: inherit;
+  font-size: 0.9rem;
+  --gmp-input-border-color: #E5E7EB;
+  --gmp-input-border-radius: 10px;
+  --gmp-input-font-size: 0.9rem;
+  --gmp-input-padding: 0.7rem 0.9rem;
 }
-:deep(.pac-item:hover) { background: #F5F7FF !important; }
-:deep(.pac-item-query) { font-weight: 600 !important; color: #1F2937 !important; }
 
 @media (max-width: 800px) {
   .form-row { grid-template-columns: 1fr; }
