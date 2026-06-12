@@ -1,6 +1,0 @@
----
-deployment:
-  tasks:
-    - export DEPLOYPATH=/home/$USER/public_html
-    - /bin/git -C $DEPLOYPATH checkout -- public/sw.js 2>/dev/null || true
-    - /bin/git -C $DEPLOYPATH checkout -- public/sw.js.map 2>/dev/null || true
