@@ -213,13 +213,16 @@ export default class GoogleProvider extends BaseProvider {
   clearRoutes() {
       if (this.routes) {
           this.routes.forEach(route => {
-              if (route && route.setMap) route.setMap(null);
+              try {
+                  if (route && route.setMap) route.setMap(null);
+              } catch (e) { /* Maps API may not be loaded */ }
           });
           this.routes.clear();
       }
-      // Destroy and reset renderer so it gets recreated fresh on next drawRoute
       if (this.directionsRenderer) {
-          this.directionsRenderer.setMap(null);
+          try {
+              this.directionsRenderer.setMap(null);
+          } catch (e) { /* Maps API may not be loaded */ }
           this.directionsRenderer = null;
       }
       this.directionsService = null;

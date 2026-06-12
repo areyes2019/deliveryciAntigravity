@@ -52,30 +52,37 @@ class MapService {
   }
 
   addMarker(id, position, options = {}) {
+    if (!this.provider) return null;
     return this.provider.addMarker(id, position, options);
   }
 
   updateMarker(id, position, options = {}) {
+    if (!this.provider) return;
     return this.provider.updateMarker(id, position, options);
   }
 
   removeMarker(id) {
+    if (!this.provider) return;
     return this.provider.removeMarker(id);
   }
 
   clearMarkers() {
+    if (!this.provider) return;
     return this.provider.clearMarkers();
   }
 
   drawRoute(id, points, options = {}) {
+    if (!this.provider) return Promise.resolve(null);
     return this.provider.drawRoute(id, points, options);
   }
 
   clearRoutes() {
-      return this.provider.clearRoutes();
+    if (!this.provider) return;
+    return this.provider.clearRoutes();
   }
 
   centerOn(position, zoom = 13) {
+    if (!this.provider) return;
     return this.provider.centerOn(position, zoom);
   }
 
