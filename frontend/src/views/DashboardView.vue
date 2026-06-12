@@ -145,12 +145,12 @@ onMounted(async () => {
           updateMapMarkers(mapCtx())
         },
         onDriverLocation: ({ driver_id, lat, lng }) => {
-          const driver = drivers.value.find(d => d.id === driver_id)
+          const driver = drivers.value.find(d => String(d.id) === String(driver_id))
           if (driver) {
             driver.current_lat = lat
             driver.current_lng = lng
             driver._pusherTs = Date.now()
-            updateMapMarkers(mapCtx())
+            if (!showFeed.value) updateMapMarkers(mapCtx())
           }
         }
       })

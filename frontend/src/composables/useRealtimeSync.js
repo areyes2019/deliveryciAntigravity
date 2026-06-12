@@ -1,10 +1,12 @@
-import { ref, onMounted, onUnmounted } from 'vue'
+import { ref, onUnmounted } from 'vue'
 import api from '../api'
 import { subscribe, unsubscribe } from '../services/realtime'
 
-const refreshInterval = ref(null)
+const POLLING_INTERVAL_MS = 30_000
 
 export function useRealtimeSync() {
+  const refreshInterval = ref(null)
+
   const startPolling = ({ role, orders, drivers, stats, showToast, updateMapMarkers }) => {
     const silentUpdate = async () => {
       // Orders y drivers se actualizan de forma independiente para que un fallo
@@ -62,12 +64,12 @@ export function useRealtimeSync() {
       if (updateMapMarkers) updateMapMarkers()
     }
 
-    // Polling cada 5 segundos como fallback cuando Pusher no está disponible
+    // Polling como fallback de recuperación — Pusher es la fuente primaria
     refreshInterval.value = setInterval(() => {
       if (role.value === 'client_admin') {
         silentUpdate()
       }
-    }, 5000)
+    }, POLLING_INTERVAL_MS)
 
     // Limpiar al desmontar
     onUnmounted(() => {

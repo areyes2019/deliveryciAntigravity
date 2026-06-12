@@ -291,24 +291,9 @@ function getLineState(lineIdx, currentStatus) {
 const refMapProvider = new GoogleProvider()
 const authStore = useAuthStore()
 
-// Polling del marcador: arranca DESPUÉS de que el mapa está listo.
-// Funciona tanto en modo simulación (backend actualiza coords en BD → polling
-// de useRealtimeSync refresca props.drivers) como en modo real.
-let _driverPollInterval = null
-
-function _startDriverPolling(rawOrder) {
-  _stopDriverPolling()
-  if (!rawOrder) return
-  _driverPollInterval = setInterval(() => {
-    if (!refMapProvider.map || !selectedTrip.value) return
-    const driver = props.drivers.find(d => String(d.id) === String(rawOrder.driver_id))
-    if (driver) _updateDriverMarker(driver, selectedTrip.value.driver_name)
-  }, 3000)
-}
-
-function _stopDriverPolling() {
-  if (_driverPollInterval) { clearInterval(_driverPollInterval); _driverPollInterval = null }
-}
+// El movimiento del marcador se maneja exclusivamente a través del
+// watcher reactivo _trackedDriverLocation, que reacciona tanto a
+// eventos Pusher (vía DashboardView) como al polling de recuperación.
 
 // Suscripción directa a Pusher para driver-location (idea de useRealTracking.js).
 // Nos enganchamos al canal que ya usa DashboardView; Pusher reutiliza la misma
@@ -401,11 +386,10 @@ async function initRefMap(trip) {
     refMapProvider.addMarker('dropoff', [dLat, dLng], { icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png',   popup: `Destino: ${trip.dropoff_address}` })
   }
 
-  // ── Marcador inicial + polling del conductor ──
+  // ── Marcador inicial del conductor (posición actual al abrir el panel) ──
   if (rawOrder) {
     const driver = props.drivers.find(d => String(d.id) === String(rawOrder.driver_id))
     if (driver) _updateDriverMarker(driver, trip.driver_name)
-    _startDriverPolling(rawOrder)   // mapa ya listo → sin race condition
   }
 }
 
@@ -421,7 +405,7 @@ function _updateDriverMarker(driver, driverName) {
   }
 }
 
-onUnmounted(() => { _unbindTracking(); _stopDriverPolling(); refMapProvider.destroy() })
+onUnmounted(() => { _unbindTracking(); refMapProvider.destroy() })
 
 // ── Estado del panel de referencia ──
 const { showToast } = useToast()
@@ -466,7 +450,6 @@ function openDetail(trip) {
 
 function closeDetail() {
   _unbindTracking()
-  _stopDriverPolling()
   selectedTrip.value = null
   showDetailPanel.value = false
   refMapProvider.destroy()
