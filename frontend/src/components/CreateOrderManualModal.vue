@@ -1367,9 +1367,7 @@ onMounted(async () => {
   Aquí se usa para cambiar el color del borde del input interno del PlaceAutocompleteElement
   de Google cuando la dirección está verificada.
 */
-.input-wrapper--verified :deep(gmp-place-autocomplete) {
-  --gmp-input-border-color: #6EE7B7;
-}
+/* borde verde del autocomplete verificado se controla desde .place-autocomplete-wrapper */
 
 /* Animación de aparición del badge "✔ Verificado" con efecto spring/rebote */
 .badge-pop-enter-active { transition: all 0.22s cubic-bezier(0.34, 1.56, 0.64, 1); }
@@ -1627,24 +1625,41 @@ onMounted(async () => {
 /* :disabled: cuando el botón está deshabilitado, no se aplica el hover ni el cursor pointer */
 .btn-publish:disabled { opacity: 0.5; cursor: not-allowed; transform: none; }
 
-/* Contenedor del PlaceAutocompleteElement: ocupa todo el ancho disponible */
+/*
+  El wrapper del PlaceAutocompleteElement actúa como el "input visual":
+  tiene el borde, el radius y el focus-ring, igual que los <input> normales.
+  El web component interno tiene su propio borde desactivado para evitar doble borde.
+*/
 .place-autocomplete-wrapper {
   width: 100%;
   display: block;
+  border: 1.5px solid #E5E7EB;
+  border-radius: 10px;
+  transition: border-color 0.2s, box-shadow 0.2s;
+}
+
+/* :focus-within se activa cuando el <input> interno recibe el foco */
+.place-autocomplete-wrapper:focus-within {
+  border-color: #6366F1;
+  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.1);
+}
+
+/* Cuando la dirección está verificada, el wrapper muestra borde verde */
+.input-wrapper--verified .place-autocomplete-wrapper {
+  border-color: #6EE7B7;
 }
 
 /*
-  :deep(gmp-place-autocomplete): piercing selector para personalizar el web component de Google.
-  Las variables CSS --gmp-* son la API pública de estilos que Google expone para PlaceAutocompleteElement.
-  Sin :deep(), Vue scoped styles no penetra dentro del shadow DOM del web component.
+  :deep(gmp-place-autocomplete): se le quita el borde propio de Google
+  para que el borde lo controle el wrapper de arriba.
 */
 :deep(gmp-place-autocomplete) {
   width: 100%;
   display: block;
   font-family: inherit;
   font-size: 0.9rem;
-  --gmp-input-border-color: #E5E7EB;
-  --gmp-input-border-radius: 10px;
+  --gmp-input-border-color: transparent;
+  --gmp-input-border-radius: 0;
   --gmp-input-font-size: 0.9rem;
   --gmp-input-padding: 0.7rem 0.9rem;
 }
