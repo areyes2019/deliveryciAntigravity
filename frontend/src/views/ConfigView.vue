@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, nextTick } from 'vue'
 import api from '../api'
 import MapService from '../services/maps/MapService'
 
@@ -96,9 +96,16 @@ const geofence    = ref(null)   // única geocerca del cliente (o null)
 const newZoneName = ref('')
 
 let mapInstance      = null
-let drawingManager   = null
 let currentPolygon   = null
 let renderedPolygons = []
+
+const isDrawing          = ref(false)
+const currentPolygonDrawn = ref(false)
+const vertexCount        = ref(0)
+let drawingVertices  = []
+let drawingMarkers   = []
+let drawingPolyline  = null
+let mapClickListener = null
 
 const fetchPricingConfig = async () => {
     try {
@@ -141,8 +148,14 @@ const enterPricingEditMode = () => {
 
 watch(() => activeTab.value, async (tab) => {
     if (tab === 'zones') {
-        await fetchGeofence()
-        setTimeout(initMap, 300)
+        try {
+            await fetchGeofence()
+            await MapService.ensureSDKLoaded()
+            await nextTick()
+            initMap()
+        } catch (e) {
+            console.error('Error inicializando mapa de geocerca:', e)
+        }
     }
 })
 
@@ -165,7 +178,7 @@ const initMap = () => {
     if (!mapEl) return
 
     if (mapInstance && mapInstance.getDiv() !== mapEl) {
-        mapInstance = null; drawingManager = null; currentPolygon = null
+        mapInstance = null; currentPolygon = null
     }
 
     if (!mapInstance) {
@@ -173,26 +186,6 @@ const initMap = () => {
             center: { lat: 20.5222, lng: -100.8122 }, zoom: 13,
             fullscreenControl: false, streetViewControl: false
         })
-        drawingManager = new google.maps.drawing.DrawingManager({
-            drawingMode: google.maps.drawing.OverlayType.POLYGON,
-            drawingControl: true,
-            drawingControlOptions: {
-                position: google.maps.ControlPosition.TOP_CENTER,
-                drawingModes: [google.maps.drawing.OverlayType.POLYGON],
-            },
-            polygonOptions: { fillColor: '#6366F1', fillOpacity: 0.3, strokeWeight: 2, clickable: false, editable: false, zIndex: 1 },
-        })
-        drawingManager.setMap(mapInstance)
-        google.maps.event.addListener(drawingManager, 'polygoncomplete', (polygon) => {
-            if (currentPolygon) currentPolygon.setMap(null)
-            currentPolygon = polygon
-            drawingManager.setDrawingMode(null)
-        })
-    }
-
-    // Si ya hay geocerca, desactivar dibujo
-    if (geofence.value) {
-        drawingManager.setDrawingMode(null)
     }
 
     renderExistingZones()
@@ -214,9 +207,72 @@ const renderExistingZones = () => {
             strokeWeight: 2, fillColor: '#10B981', fillOpacity: 0.35, map: mapInstance
         })
         renderedPolygons.push(polygon)
-        // Si ya existe geocerca, desactivar modo dibujo
-        if (drawingManager) drawingManager.setDrawingMode(null)
     }
+}
+
+const clearDrawingTemp = () => {
+    drawingMarkers.forEach(m => m.setMap(null))
+    drawingMarkers = []
+    if (drawingPolyline) { drawingPolyline.setMap(null); drawingPolyline = null }
+    if (currentPolygon)  { currentPolygon.setMap(null);  currentPolygon  = null }
+    drawingVertices = []
+    vertexCount.value = 0
+    currentPolygonDrawn.value = false
+}
+
+const startDrawing = () => {
+    if (!mapInstance) return
+    clearDrawingTemp()
+    isDrawing.value = true
+    mapInstance.setOptions({ draggableCursor: 'crosshair' })
+    mapClickListener = google.maps.event.addListener(mapInstance, 'click', onMapClick)
+}
+
+const onMapClick = (e) => {
+    const latLng = e.latLng
+    drawingVertices.push({ lat: latLng.lat(), lng: latLng.lng() })
+    vertexCount.value = drawingVertices.length
+
+    drawingMarkers.push(new google.maps.Marker({
+        position: latLng, map: mapInstance, zIndex: 10,
+        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5,
+                fillColor: '#6366F1', fillOpacity: 1,
+                strokeColor: '#ffffff', strokeWeight: 2 }
+    }))
+
+    if (drawingPolyline) drawingPolyline.setMap(null)
+    if (drawingVertices.length >= 2) {
+        drawingPolyline = new google.maps.Polyline({
+            path: [...drawingVertices, drawingVertices[0]],
+            strokeColor: '#6366F1', strokeWeight: 2, strokeOpacity: 0.8, map: mapInstance
+        })
+    }
+
+    if (currentPolygon) currentPolygon.setMap(null)
+    if (drawingVertices.length >= 3) {
+        currentPolygon = new google.maps.Polygon({
+            paths: drawingVertices, map: mapInstance,
+            fillColor: '#6366F1', fillOpacity: 0.25, strokeWeight: 0, clickable: false
+        })
+    }
+}
+
+const finishDrawing = () => {
+    if (drawingVertices.length < 3) return
+    isDrawing.value = false
+    mapInstance.setOptions({ draggableCursor: '' })
+    if (mapClickListener) { google.maps.event.removeListener(mapClickListener); mapClickListener = null }
+    drawingMarkers.forEach(m => m.setMap(null)); drawingMarkers = []
+    if (drawingPolyline) { drawingPolyline.setMap(null); drawingPolyline = null }
+    currentPolygonDrawn.value = true
+    // currentPolygon permanece visible como el área confirmada
+}
+
+const cancelDrawing = () => {
+    isDrawing.value = false
+    mapInstance?.setOptions({ draggableCursor: '' })
+    if (mapClickListener) { google.maps.event.removeListener(mapClickListener); mapClickListener = null }
+    clearDrawingTemp()
 }
 
 const saveGeofence = async () => {
@@ -233,6 +289,7 @@ const saveGeofence = async () => {
             polygon_coordinates: coords
         })
         currentPolygon.setMap(null); currentPolygon = null
+        currentPolygonDrawn.value = false
         newZoneName.value = ''
         await fetchGeofence(); renderExistingZones()
     } catch { alert('Error al guardar geocerca.') }
@@ -245,8 +302,7 @@ const deleteGeofence = async () => {
         await api.delete(`/geofences/${geofence.value.id}`)
         geofence.value = null
         renderedPolygons.forEach(p => p.setMap(null)); renderedPolygons = []
-        // Reactivar modo dibujo
-        if (drawingManager) drawingManager.setDrawingMode(google.maps.drawing.OverlayType.POLYGON)
+        clearDrawingTemp()
     } catch { alert('Error al eliminar geocerca') }
 }
 
@@ -256,7 +312,6 @@ const deleteGeofence = async () => {
 onMounted(() => {
     fetchBillingConfig()
     loadPricingData()
-    fetchGeofence()
 })
 </script>
 
@@ -404,11 +459,21 @@ onMounted(() => {
         <div class="zones-layout">
           <div class="zone-panel">
             <div class="map-container-wrapper">
-              <div id="zone-map" style="width:100%;height:580px;border-radius:12px;overflow:hidden"></div>
-              <div class="map-help" v-if="!geofence">
-                Usa la herramienta ⬟ del mapa para trazar el polígono, luego guárdalo.
+              <div id="zone-map" style="width:100%;height:580px;"></div>
+              <div class="map-help" v-if="!geofence && !isDrawing && !currentPolygonDrawn">
+                <button class="btn-draw-area" @click="startDrawing">✏️ Trazar Área</button>
               </div>
-              <div class="map-help geofence-active" v-else>
+              <div class="map-help map-help--drawing" v-else-if="isDrawing">
+                <span>{{ vertexCount }} punto(s) — haz clic en el mapa para añadir vértices</span>
+                <div class="drawing-actions">
+                  <button class="btn-confirm-draw" :disabled="vertexCount < 3" @click="finishDrawing">✓ Confirmar</button>
+                  <button class="btn-cancel-sm" @click="cancelDrawing">✕ Cancelar</button>
+                </div>
+              </div>
+              <div class="map-help map-help--drawn" v-else-if="currentPolygonDrawn">
+                ✅ Área trazada. Asigna un nombre y guárdala.
+              </div>
+              <div class="map-help geofence-active" v-else-if="geofence">
                 ✅ Geocerca activa. Elimínala para trazar una nueva.
               </div>
             </div>
@@ -547,9 +612,17 @@ onMounted(() => {
 .action-btns { display: flex; flex-direction: column; gap: 0.6rem; margin-top: 1.25rem; }
 .btn-cancel { background: white; color: #374151; padding: 0.7rem 1rem; border-radius: 8px; border: 1px solid #D1D5DB; font-weight: 600; cursor: pointer; transition: all 0.2s; width: 100%; }
 .btn-cancel:hover { background: #F3F4F6; }
-.map-container-wrapper { position: relative; border: 1px solid #D1D5DB; border-radius: 12px; margin-bottom: 1rem; }
+.map-container-wrapper { position: relative; border: 1px solid #D1D5DB; border-radius: 12px; overflow: hidden; margin-bottom: 1rem; }
 .map-help { padding: 0.5rem 1rem; font-size: 0.75rem; color: #6B7280; text-align: center; background: #F3F4F6; border-bottom-left-radius: 12px; border-bottom-right-radius: 12px; }
 .map-help.geofence-active { background: #D1FAE5; color: #065F46; font-weight: 600; }
+.map-help--drawing { background: #EEF2FF; color: #3730A3; display: flex; flex-direction: column; gap: 0.4rem; align-items: center; padding: 0.6rem 1rem; }
+.map-help--drawn { background: #D1FAE5; color: #065F46; font-weight: 600; }
+.drawing-actions { display: flex; gap: 0.5rem; }
+.btn-draw-area { background: #6366F1; color: white; border: none; border-radius: 7px; padding: 0.4rem 1rem; font-size: 0.8rem; font-weight: 600; cursor: pointer; }
+.btn-draw-area:hover { opacity: 0.88; }
+.btn-confirm-draw { background: #10B981; color: white; border: none; border-radius: 6px; padding: 0.3rem 0.8rem; font-size: 0.78rem; font-weight: 600; cursor: pointer; }
+.btn-confirm-draw:disabled { opacity: 0.45; cursor: not-allowed; }
+.btn-cancel-sm { background: white; color: #6B7280; border: 1px solid #D1D5DB; border-radius: 6px; padding: 0.3rem 0.8rem; font-size: 0.78rem; cursor: pointer; }
 .new-zone-form { display: flex; flex-direction: column; gap: 0.5rem; margin-top: 1rem; padding-top: 1rem; border-top: 1px solid var(--border-light); }
 .new-zone-form input { width: 100%; padding: 0.55rem 0.75rem; border: 1px solid #D1D5DB; border-radius: 6px; font-family: inherit; font-size: 0.875rem; box-sizing: border-box; }
 .save-zone-btn { white-space: nowrap; }

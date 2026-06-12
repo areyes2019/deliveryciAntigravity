@@ -55,7 +55,7 @@ export default class GoogleProvider extends BaseProvider {
       };
 
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places,drawing&loading=async&callback=__initGoogleMaps`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places&loading=async&callback=__initGoogleMaps`;
       script.async = true;
       script.defer = true;
       script.onerror = (err) => {
