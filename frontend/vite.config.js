@@ -2,9 +2,18 @@ import { defineConfig } from 'vite'
 import vue from '@vitejs/plugin-vue'
 import tailwindcss from '@tailwindcss/vite'
 import { VitePWA } from 'vite-plugin-pwa'
+import { rmSync } from 'fs'
+import { resolve } from 'path'
 
 // https://vite.dev/config/
-export default defineConfig(({ mode }) => ({
+export default defineConfig(({ mode, command }) => {
+  if (command === 'build') {
+    try {
+      rmSync(resolve(__dirname, '../public/assets'), { recursive: true, force: true })
+    } catch {}
+  }
+
+  return {
   base: '/',
   plugins: [
     vue(),
@@ -53,4 +62,5 @@ export default defineConfig(({ mode }) => ({
     outDir: '../public',
     emptyOutDir: false,
   }
-}))
+  }
+})
