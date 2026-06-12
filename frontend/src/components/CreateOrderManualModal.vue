@@ -212,10 +212,11 @@ const attachAutocomplete = (containerEl, addressField, latField, lngField) => {
   const activeBounds = dynamicBounds ?? celayaBounds
 
   const placeAuto = new google.maps.places.PlaceAutocompleteElement({
-    componentRestrictions: { country: 'mx' },
+    includedRegionCodes: ['mx'],
     types: ['geocode', 'establishment'],
-    locationBias: activeBounds,
-    ...(dynamicBounds ? { locationRestriction: activeBounds } : {})
+    ...(dynamicBounds
+      ? { locationRestriction: dynamicBounds.toJSON() }
+      : { locationBias: celayaBounds })
   })
   placeAuto.style.width = '100%'
   containerEl.appendChild(placeAuto)
