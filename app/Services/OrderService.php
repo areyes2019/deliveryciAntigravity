@@ -149,7 +149,7 @@ class OrderService
         if ($scheduledAt) {
             // El frontend envió una fecha programada (formato local Y-m-d H:i:s)
             $scheduledDt = date_create($scheduledAt, $tz);
-            $isScheduled = $scheduledDt && $scheduledDt > $nowDt;
+            $isScheduled = $scheduledDt && $scheduledDt > (clone $nowDt)->modify('+5 minutes');
         } else {
             // Modo "Lo antes posible" — usar hora local actual
             $scheduledAt = $nowDt->format('Y-m-d H:i:s');
