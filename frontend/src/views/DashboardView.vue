@@ -135,11 +135,16 @@ onMounted(async () => {
     if (clientId) {
       setupRealtimeListeners({
         clientId,
-        onNewTrip: async () => {
-          const res = await api.get('/orders')
-          if (res.data.status) {
-            orders.value = res.data.data
+        onNewTrip: async (data) => {
+          const alreadyInList = data?.trip_id && orders.value.some(o => String(o.id) === String(data.trip_id))
+          if (alreadyInList) {
             stats.value.activeOrders = countActive()
+          } else {
+            const res = await api.get('/orders')
+            if (res.data.status) {
+              orders.value = res.data.data
+              stats.value.activeOrders = countActive()
+            }
           }
           updateMapMarkers(mapCtx())
         },
