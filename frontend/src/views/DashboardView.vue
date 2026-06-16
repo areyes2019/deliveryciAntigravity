@@ -85,8 +85,16 @@ const mapCtx = () => ({
 
 const onOrderCreated = (newOrder) => {
   orders.value = [newOrder, ...orders.value]
-  stats.value.activeOrders = countActive()
-  updateMapMarkers(mapCtx())
+  console.log(
+    'pending',
+    pendingOrders.value.length,
+    'scheduled',
+    scheduledOrders.value.length,
+    'active',
+    activeOrdersList.value.length
+  )
+  //stats.value.activeOrders = countActive()
+  //updateMapMarkers(mapCtx())
 }
 
 const handleSelectOrder = async (order) => {
@@ -128,7 +136,11 @@ onMounted(async () => {
       setupRealtimeListeners({
         clientId,
         onNewTrip: async () => {
-          await fetchDashboardData()
+          const res = await api.get('/orders')
+          if (res.data.status) {
+            orders.value = res.data.data
+            stats.value.activeOrders = countActive()
+          }
           updateMapMarkers(mapCtx())
         },
         onTripTaken: async () => {
