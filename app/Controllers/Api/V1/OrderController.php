@@ -101,6 +101,9 @@ class OrderController extends BaseController
         $result = $this->orderService->createOrder($client['id'], $data);
 
         if ($result['status']) {
+            $this->orderService->publishDueOrders();
+            $orderModel = new \App\Models\OrderModel();
+            $result['data'] = $orderModel->find($result['data']['id']);
             return $this->respondSuccess($result['message'], $result['data'], 201);
         }
 
