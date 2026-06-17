@@ -459,8 +459,13 @@ async function openDetail(trip) {
   _lastKnownDriverPos.value = null    // limpia la pizarra del viaje anterior
   selectedTrip.value = trip
   showDetailPanel.value = true
-  await initRefMap(trip)              // espera a que el mapa esté completamente listo
-  _bindTracking()                     // ahora el mapa está listo: ningún evento se pierde
+  _bindTracking()                     // arranca tracking de inmediato; los eventos que lleguen
+                                      // antes de que el mapa esté listo se guardan en _lastKnownDriverPos
+  try {
+    await initRefMap(trip)            // inicializa el mapa y aplica el buffer de posición al final
+  } catch (err) {
+    console.error('[ActivityFeed] initRefMap error:', err)
+  }
 }
 
 function closeDetail() {
