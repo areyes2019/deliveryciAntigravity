@@ -47,14 +47,9 @@ class OrderController extends BaseController
                 return $this->respondError('Client profile not found');
             }
 
-            $cutoff = date('Y-m-d H:i:s', strtotime('-7 days'));
             $orders = $orderModel
                 ->where('client_id', $client['id'])
-                ->groupStart()
-                    ->whereIn('status', ['publicado', 'tomado', 'arribado', 'en_camino', 'arribado_a_entrega', 'pendiente'])
-                    ->orWhere('updated_at >=', $cutoff)
-                ->groupEnd()
-                ->orderBy('updated_at', 'DESC')
+                ->whereIn('status', ['pendiente', 'publicado', 'tomado', 'arribado', 'en_camino', 'arribado_a_entrega'])
                 ->findAll();
         } else {
             return $this->respondUnauthorized('Unauthorized access for this role.');
