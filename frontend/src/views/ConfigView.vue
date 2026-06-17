@@ -184,6 +184,7 @@ const initMap = () => {
     if (!mapInstance) {
         mapInstance = new google.maps.Map(mapEl, {
             center: { lat: 20.5222, lng: -100.8122 }, zoom: 13,
+            mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID',
             fullscreenControl: false, streetViewControl: false
         })
     }
@@ -211,7 +212,7 @@ const renderExistingZones = () => {
 }
 
 const clearDrawingTemp = () => {
-    drawingMarkers.forEach(m => m.setMap(null))
+    drawingMarkers.forEach(m => { m.map = null })
     drawingMarkers = []
     if (drawingPolyline) { drawingPolyline.setMap(null); drawingPolyline = null }
     if (currentPolygon)  { currentPolygon.setMap(null);  currentPolygon  = null }
@@ -233,11 +234,10 @@ const onMapClick = (e) => {
     drawingVertices.push({ lat: latLng.lat(), lng: latLng.lng() })
     vertexCount.value = drawingVertices.length
 
-    drawingMarkers.push(new google.maps.Marker({
-        position: latLng, map: mapInstance, zIndex: 10,
-        icon: { path: google.maps.SymbolPath.CIRCLE, scale: 5,
-                fillColor: '#6366F1', fillOpacity: 1,
-                strokeColor: '#ffffff', strokeWeight: 2 }
+    const dot = document.createElement('div')
+    dot.style.cssText = 'width:10px;height:10px;border-radius:50%;background:#6366F1;border:2px solid #ffffff;cursor:pointer'
+    drawingMarkers.push(new google.maps.marker.AdvancedMarkerElement({
+        position: latLng, map: mapInstance, zIndex: 10, content: dot
     }))
 
     if (drawingPolyline) drawingPolyline.setMap(null)
@@ -262,7 +262,7 @@ const finishDrawing = () => {
     isDrawing.value = false
     mapInstance.setOptions({ draggableCursor: '' })
     if (mapClickListener) { google.maps.event.removeListener(mapClickListener); mapClickListener = null }
-    drawingMarkers.forEach(m => m.setMap(null)); drawingMarkers = []
+    drawingMarkers.forEach(m => { m.map = null }); drawingMarkers = []
     if (drawingPolyline) { drawingPolyline.setMap(null); drawingPolyline = null }
     currentPolygonDrawn.value = true
     // currentPolygon permanece visible como el área confirmada

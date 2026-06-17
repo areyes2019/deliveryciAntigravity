@@ -602,24 +602,28 @@ watch(
     const bounds = new google.maps.LatLngBounds();
 
     // Eliminar el marcador anterior antes de crear uno nuevo para evitar duplicados
-    if (pickupMarker) pickupMarker.setMap(null);
+    if (pickupMarker) pickupMarker.map = null;
     if (!isNaN(pLat) && !isNaN(pLng)) {
         const pos = { lat: pLat, lng: pLng };
         // Marcador verde = punto de RECOGIDA
-        pickupMarker = new google.maps.Marker({
-            position: pos, map: mapInstance,
-            icon: 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+        const pickupImg = document.createElement('img')
+        pickupImg.src = 'http://maps.google.com/mapfiles/ms/icons/green-dot.png'
+        pickupImg.style.cssText = 'width:32px;height:32px'
+        pickupMarker = new google.maps.marker.AdvancedMarkerElement({
+            position: pos, map: mapInstance, content: pickupImg
         });
         bounds.extend(pos);
     }
 
-    if (dropMarker) dropMarker.setMap(null);
+    if (dropMarker) dropMarker.map = null;
     if (!isNaN(dLat) && !isNaN(dLng)) {
         const pos = { lat: dLat, lng: dLng };
         // Marcador rojo = punto de ENTREGA
-        dropMarker = new google.maps.Marker({
-            position: pos, map: mapInstance,
-            icon: 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+        const dropImg = document.createElement('img')
+        dropImg.src = 'http://maps.google.com/mapfiles/ms/icons/red-dot.png'
+        dropImg.style.cssText = 'width:32px;height:32px'
+        dropMarker = new google.maps.marker.AdvancedMarkerElement({
+            position: pos, map: mapInstance, content: dropImg
         });
         bounds.extend(pos);
     }
@@ -789,22 +793,17 @@ onMounted(async () => {
      * Inicializar el mapa de Google centrado en Celaya, Guanajuato.
      * disableDefaultUI: true → oculta todos los controles por defecto (Street View, etc.)
      * zoomControl: true     → reactivar solo el control de zoom
-     * styles: personalización visual (paleta de grises minimalista) para que el mapa
-     *         no compita visualmente con el formulario.
+     * mapId requerido por AdvancedMarkerElement; los estilos visuales se
+     *        gestionan desde Google Cloud Console (no se pueden pasar inline con mapId).
      * El id 'modal-map-manual' corresponde al div en el template.
      */
     if (window.google?.maps) {
         mapInstance = new google.maps.Map(document.getElementById('modal-map-manual'), {
             center: { lat: 20.5222, lng: -100.8122 }, // Centro de Celaya, Gto.
             zoom: 13,
+            mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID',
             disableDefaultUI: true,
-            zoomControl: true,
-            styles: [
-                { "elementType": "geometry", "stylers": [{ "color": "#f5f5f5" }] },
-                { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
-                { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#ffffff" }] },
-                { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#c9c9c9" }] }
-            ]
+            zoomControl: true
         });
     }
   }, 100)

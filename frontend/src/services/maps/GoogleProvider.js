@@ -111,13 +111,6 @@ export default class GoogleProvider extends BaseProvider {
             mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID',
             disableDefaultUI: true,
             zoomControl: true,
-            // Estilo Silver Premium
-            styles: [
-                { "elementType": "geometry", "stylers": [{ "color": "#f5f5f5" }] },
-                { "elementType": "labels.icon", "stylers": [{ "visibility": "off" }] },
-                { "featureType": "road", "elementType": "geometry", "stylers": [{ "color": "#ffffff" }] },
-                { "featureType": "water", "elementType": "geometry", "stylers": [{ "color": "#c9c9c9" }] }
-            ]
         });
     } catch (error) {
         console.error('❌ Error interno de Google Maps:', error);
