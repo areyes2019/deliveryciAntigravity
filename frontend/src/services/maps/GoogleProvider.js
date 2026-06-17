@@ -55,7 +55,7 @@ export default class GoogleProvider extends BaseProvider {
       };
 
       const script = document.createElement('script');
-      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places&loading=async&callback=__initGoogleMaps`;
+      script.src = `https://maps.googleapis.com/maps/api/js?key=${this.apiKey}&libraries=geometry,places,marker&loading=async&callback=__initGoogleMaps`;
       script.async = true;
       script.defer = true;
       script.onerror = (err) => {
@@ -108,6 +108,7 @@ export default class GoogleProvider extends BaseProvider {
         this.map = new google.maps.Map(mapElement, {
             center: center,
             zoom: options.zoom || 14,
+            mapId: import.meta.env.VITE_GOOGLE_MAPS_MAP_ID || 'DEMO_MAP_ID',
             disableDefaultUI: true,
             zoomControl: true,
             // Estilo Silver Premium
@@ -132,18 +133,15 @@ export default class GoogleProvider extends BaseProvider {
 
     // Remove any existing marker to prevent ghost duplicates
     if (this.markers.has(id)) {
-        this.markers.get(id).setMap(null);
+        this.markers.get(id).map = null;
         this.markers.delete(id);
     }
 
-    const customIcon = this._normalizeIcon(options.icon);
-
-    const marker = new google.maps.Marker({
+    const marker = new google.maps.marker.AdvancedMarkerElement({
         position: coords,
         map: this.map,
-        icon: customIcon,
+        content: this._buildContent(options.icon),
         title: options.popup || '',
-        animation: google.maps.Animation.DROP,
         zIndex: 999
     });
 
@@ -153,7 +151,7 @@ export default class GoogleProvider extends BaseProvider {
             content: `<div style="color: #111827; padding: 5px;">${options.popup}</div>`
         });
         marker.addListener('click', () => {
-            infoWindow.open(this.map, marker);
+            infoWindow.open({ map: this.map, anchor: marker });
         });
     }
 
@@ -168,8 +166,14 @@ export default class GoogleProvider extends BaseProvider {
       marker._animFrame = null
     }
 
-    const from = marker.getPosition()
-    if (!from) { marker.setPosition(to); return }
+    const raw = marker.position
+    const from = raw
+      ? {
+          lat: typeof raw.lat === 'function' ? raw.lat() : raw.lat,
+          lng: typeof raw.lng === 'function' ? raw.lng() : raw.lng
+        }
+      : null
+    if (!from) { marker.position = to; return }
 
     // Dynamic duration: use real interval between GPS updates (clamped 1s–5s)
     const now = performance.now()
@@ -178,8 +182,8 @@ export default class GoogleProvider extends BaseProvider {
       : 2000
     marker._lastUpdateTs = now
 
-    const startLat = from.lat()
-    const startLng = from.lng()
+    const startLat = from.lat
+    const startLng = from.lng
     const startTime = now
 
     // Smoothstep easing: ease-in-out
@@ -188,10 +192,10 @@ export default class GoogleProvider extends BaseProvider {
     const step = (ts) => {
       const rawT = Math.min((ts - startTime) / duration, 1)
       const t = ease(rawT)
-      marker.setPosition({
+      marker.position = {
         lat: startLat + (to.lat - startLat) * t,
         lng: startLng + (to.lng - startLng) * t,
-      })
+      }
       if (rawT < 1) {
         marker._animFrame = requestAnimationFrame(step)
       } else {
@@ -208,7 +212,7 @@ export default class GoogleProvider extends BaseProvider {
     if (marker && coords) {
       this._animateMarker(marker, coords);
       if (options.icon) {
-          marker.setIcon(this._normalizeIcon(options.icon));
+          marker.content = this._buildContent(options.icon);
       }
     } else if (!marker && coords) {
       this.addMarker(id, coords, options);
@@ -219,7 +223,7 @@ export default class GoogleProvider extends BaseProvider {
       if (!this.markers) return;
       const marker = this.markers.get(id);
       if (marker) {
-          marker.setMap(null);
+          marker.map = null;
           this.markers.delete(id);
       }
   }
@@ -227,7 +231,7 @@ export default class GoogleProvider extends BaseProvider {
   clearMarkers() {
       if (this.markers) {
           this.markers.forEach(marker => {
-              if (marker) marker.setMap(null);
+              if (marker) marker.map = null;
           });
           this.markers.clear();
       }
@@ -345,6 +349,26 @@ export default class GoogleProvider extends BaseProvider {
         const cLng = parseFloat(lng);
         return (isNaN(cLat) || isNaN(cLng)) ? null : { lat: cLat, lng: cLng };
     } catch (e) { return null; }
+  }
+
+  _buildContent(icon) {
+    if (!icon) return null
+
+    if (typeof icon === 'string' && !icon.startsWith('http') && !icon.startsWith('data:')) {
+      const el = document.createElement('div')
+      el.style.cssText = 'font-size:32px;line-height:1;cursor:pointer'
+      el.textContent = icon
+      return el
+    }
+
+    if (typeof icon === 'string') {
+      const img = document.createElement('img')
+      img.src = icon
+      img.style.cssText = 'width:32px;height:32px'
+      return img
+    }
+
+    return null
   }
 
   _normalizeIcon(icon) {
