@@ -206,6 +206,43 @@ const countActive = () => orders.value.filter(o => activeStatuses.includes(o.sta
 // La lógica se bifurca según el rol porque cada rol necesita datos diferentes:
 //   - 'superadmin':   ve TODOS los clientes de la plataforma y su balance global
 //   - 'client_admin': ve solo SU flota, SUS geofences y SU saldo personal
+// Refresco ligero para handlers de eventos Pusher: solo orders + drivers en paralelo.
+// No toca geofences ni auth/me (no cambian con los viajes), reduciendo el tiempo
+// de ~1.2s a ~250ms por evento de estado.
+const refreshTripsAndDrivers = async () => {
+  try {
+    const [ordersRes, driversRes] = await Promise.all([
+      api.get('/orders'),
+      api.get('/drivers')
+    ])
+    if (ordersRes.data.status) {
+      orders.value = ordersRes.data.data
+      stats.value.activeOrders = countActive()
+    }
+    if (driversRes.data.status) {
+      const freshDrivers = driversRes.data.data
+      freshDrivers.forEach(fresh => {
+        const idx = drivers.value.findIndex(d => d.id === fresh.id)
+        if (idx !== -1) {
+          const existing = drivers.value[idx]
+          const pusherIsRecent = existing._pusherTs && (Date.now() - existing._pusherTs) < 10_000
+          drivers.value[idx] = {
+            ...fresh,
+            current_lat: pusherIsRecent ? existing.current_lat : fresh.current_lat,
+            current_lng: pusherIsRecent ? existing.current_lng : fresh.current_lng,
+            _pusherTs: existing._pusherTs ?? null,
+          }
+        } else {
+          drivers.value.push(fresh)
+        }
+      })
+      drivers.value = drivers.value.filter(d => freshDrivers.some(f => f.id === d.id))
+    }
+  } catch (e) {
+    console.error('[refreshTripsAndDrivers]', e)
+  }
+}
+
 const fetchDashboardData = async () => {
   loading.value = true
   try {
@@ -366,7 +403,7 @@ onMounted(async () => {
               stats.value.activeOrders = countActive()
             }
           }
-          await fetchDashboardData()
+          await refreshTripsAndDrivers()
           updateMapMarkers(mapCtx())
         },
 
@@ -382,7 +419,7 @@ onMounted(async () => {
               stats.value.activeOrders = countActive()
             }
           }
-          await fetchDashboardData()
+          await refreshTripsAndDrivers()
           updateMapMarkers(mapCtx())
         },
 
