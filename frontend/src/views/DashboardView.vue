@@ -372,7 +372,16 @@ onMounted(async () => {
 
         // Evento: el status de un pedido cambió durante el viaje
         // (ej: conductor marcó que recogió el paquete → 'en_camino').
-        onTripUpdated: async () => {
+        // Actualización optimista: cambia el status localmente de inmediato;
+        // el refetch posterior trae los timestamps y datos completos.
+        onTripUpdated: async (data) => {
+          if (data?.trip_id && data?.status) {
+            const idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
+            if (idx !== -1) {
+              orders.value[idx] = { ...orders.value[idx], status: data.status }
+              stats.value.activeOrders = countActive()
+            }
+          }
           await fetchDashboardData()
           updateMapMarkers(mapCtx())
         },

@@ -28,8 +28,12 @@ class OrderController extends BaseController
             return $this->respondUnauthorized();
         }
 
-        // Auto-publish scheduled orders whose time has arrived (lazy approach, no cron needed)
-        $this->orderService->publishDueOrders();
+        // Auto-publish scheduled orders cuyo scheduled_at ya venció.
+        // Se limita a una ejecución por minuto con caché para no penalizar cada request.
+        if (!cache()->get('publish_due_orders_ran')) {
+            $this->orderService->publishDueOrders();
+            cache()->save('publish_due_orders_ran', true, 60);
+        }
 
         $orderModel = new \App\Models\OrderModel();
 
@@ -43,7 +47,15 @@ class OrderController extends BaseController
                 return $this->respondError('Client profile not found');
             }
 
-            $orders = $orderModel->where('client_id', $client['id'])->findAll();
+            $cutoff = date('Y-m-d H:i:s', strtotime('-7 days'));
+            $orders = $orderModel
+                ->where('client_id', $client['id'])
+                ->groupStart()
+                    ->whereIn('status', ['publicado', 'tomado', 'arribado', 'en_camino', 'arribado_a_entrega', 'pendiente'])
+                    ->orWhere('updated_at >=', $cutoff)
+                ->groupEnd()
+                ->orderBy('updated_at', 'DESC')
+                ->findAll();
         } else {
             return $this->respondUnauthorized('Unauthorized access for this role.');
         }
