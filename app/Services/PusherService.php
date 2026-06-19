@@ -51,4 +51,27 @@ class PusherService
             log_message('error', '[PusherService] trigger failed — channel=' . $channel . ' event=' . $event . ' err=' . $e->getMessage());
         }
     }
+
+    /**
+     * Emite múltiples eventos en una sola llamada HTTP a la API de Pusher (máx. 10 por batch).
+     *
+     * Formato de $events:
+     *   [['channel' => 'trips.42', 'name' => 'new-trip', 'data' => ['trip_id' => 7]], ...]
+     *
+     * Si hay más de 10 eventos se divide automáticamente en chunks de 10.
+     */
+    public static function triggerBatch(array $events): void
+    {
+        if (empty($events)) {
+            return;
+        }
+
+        foreach (array_chunk($events, 10) as $chunk) {
+            try {
+                self::client()->triggerBatch($chunk);
+            } catch (\Throwable $e) {
+                log_message('error', '[PusherService] triggerBatch failed — count=' . count($chunk) . ' err=' . $e->getMessage());
+            }
+        }
+    }
 }

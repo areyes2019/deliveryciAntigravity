@@ -343,26 +343,44 @@ class OrderService
             ->where('scheduled_at <=', $now)
             ->findAll();
 
+        if (empty($due)) {
+            return;
+        }
+
+        // Una sola transacción para todos los cambios de estado
+        $this->db->transStart();
+
+        $ids = array_column($due, 'id');
+        $this->db->table('orders')
+            ->whereIn('id', $ids)
+            ->update(['status' => 'publicado']);
+
         foreach ($due as $order) {
-            $this->db->transStart();
-
-            $this->orderModel->update($order['id'], ['status' => 'publicado']);
-
             $this->statusLogModel->insert([
                 'order_id'        => $order['id'],
                 'previous_status' => 'pendiente',
                 'new_status'      => 'publicado',
             ]);
-
-            $this->db->transComplete();
-
-            log_message('info', "[OrderService] Orden #{$order['id']} publicada automáticamente (scheduled_at={$order['scheduled_at']})");
-
-            PusherService::trigger(
-                'trips.' . $order['client_id'],
-                'new-trip',
-                ['trip_id' => (int) $order['id']]
-            );
         }
+
+        $this->db->transComplete();
+
+        if ($this->db->transStatus() === false) {
+            log_message('error', '[OrderService] publishDueOrders: batch transaction failed');
+            return;
+        }
+
+        // Triggers de Pusher fuera de la transacción en un solo batch HTTP
+        $pusherEvents = [];
+        foreach ($due as $order) {
+            log_message('info', "[OrderService] Orden #{$order['id']} publicada automáticamente (scheduled_at={$order['scheduled_at']})");
+            $pusherEvents[] = [
+                'channel' => 'trips.' . $order['client_id'],
+                'name'    => 'new-trip',
+                'data'    => ['trip_id' => (int) $order['id']],
+            ];
+        }
+
+        PusherService::triggerBatch($pusherEvents);
     }
 }

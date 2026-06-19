@@ -333,7 +333,7 @@ class DriverApiController extends BaseController
     public function updateLocation()
     {
         $userData = $this->request->jwtPayload;
-        $driver = $this->driverModel->where('user_id', $userData['id'])->first();
+        $driver   = $this->driverModel->where('user_id', $userData['id'])->first();
 
         if (!$driver) {
             return $this->respondError('Driver profile not found.', [], 404);
@@ -345,22 +345,46 @@ class DriverApiController extends BaseController
             return $this->respondError('Latitude and longitude are required.');
         }
 
-        $this->driverModel->update($driver['id'], [
-            'current_lat' => $input['lat'],
-            'current_lng' => $input['lng']
-        ]);
+        $newLat          = (float) $input['lat'];
+        $newLng          = (float) $input['lng'];
+        $minDistMeters   = 30;
+        $prevLat         = (float) ($driver['current_lat'] ?? 0);
+        $prevLng         = (float) ($driver['current_lng'] ?? 0);
 
-        PusherService::trigger(
-            'trips.' . $driver['client_id'],
-            'driver-location',
-            [
-                'driver_id' => (int) $driver['id'],
-                'lat'       => (float) $input['lat'],
-                'lng'       => (float) $input['lng'],
-            ]
-        );
+        $pusherPayload = [
+            'driver_id' => (int) $driver['id'],
+            'lat'       => $newLat,
+            'lng'       => $newLng,
+        ];
+
+        // Solo escribir en MySQL si el conductor se desplazó más de MIN_DISTANCE_METERS.
+        // El trigger Pusher siempre se envía para mantener el mapa fluido.
+        if ($prevLat === 0.0 && $prevLng === 0.0
+            || $this->haversineMeters($prevLat, $prevLng, $newLat, $newLng) >= $minDistMeters
+        ) {
+            $this->driverModel->update($driver['id'], [
+                'current_lat' => $newLat,
+                'current_lng' => $newLng,
+            ]);
+        }
+
+        PusherService::trigger('trips.' . $driver['client_id'], 'driver-location', $pusherPayload);
 
         return $this->respondSuccess('Location updated successfully.');
+    }
+
+    /**
+     * Distancia en metros entre dos coordenadas (fórmula de Haversine).
+     */
+    private function haversineMeters(float $lat1, float $lng1, float $lat2, float $lng2): float
+    {
+        $R  = 6371000;
+        $φ1 = deg2rad($lat1);
+        $φ2 = deg2rad($lat2);
+        $Δφ = deg2rad($lat2 - $lat1);
+        $Δλ = deg2rad($lng2 - $lng1);
+        $a  = sin($Δφ / 2) ** 2 + cos($φ1) * cos($φ2) * sin($Δλ / 2) ** 2;
+        return 2 * $R * asin(sqrt($a));
     }
     /**
      * Get current assigned trip

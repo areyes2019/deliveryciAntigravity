@@ -145,14 +145,17 @@ class WalletMovementModel extends Model
      */
     public function getTodayStats(int $driverId): array
     {
-        $db    = \Config\Database::connect();
-        $today = date('Y-m-d');
+        $db         = \Config\Database::connect();
+        $todayStart = date('Y-m-d') . ' 00:00:00';
+        $todayEnd   = date('Y-m-d') . ' 23:59:59';
 
+        // Rango explícito en lugar de DATE(col) = ? para que MySQL pueda usar índices
         $tripCount = (int) $db->table('order_status_log osl')
             ->join('orders o', 'o.id = osl.order_id')
             ->where('o.driver_id', $driverId)
             ->where('osl.new_status', 'entregado')
-            ->where('DATE(osl.log_time)', $today)
+            ->where('osl.log_time >=', $todayStart)
+            ->where('osl.log_time <=', $todayEnd)
             ->countAllResults();
 
         $earningsRow = $this->builder()
@@ -160,7 +163,8 @@ class WalletMovementModel extends Model
             ->where('driver_id', $driverId)
             ->where('type', self::TYPE_INCOME)
             ->where('wallet_type', self::WALLET_EARNINGS)
-            ->where('DATE(created_at)', $today)
+            ->where('created_at >=', $todayStart)
+            ->where('created_at <=', $todayEnd)
             ->get()
             ->getRowArray();
 

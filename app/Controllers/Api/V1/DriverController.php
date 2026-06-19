@@ -22,23 +22,28 @@ class DriverController extends BaseController
             return $this->respondUnauthorized('Access denied.');
         }
 
-        $driverModel  = new DriverModel();
         $billingModel = new DriverBillingConfigModel();
+        $db           = \Config\Database::connect();
 
-        // Subquery: only guarantee wallet
-        $guaranteeSubquery = "(SELECT COALESCE(SUM(amount), 0) FROM wallet_movements
-                               WHERE driver_id = drivers.id
-                               AND wallet_type = 'guarantee') as saldo_garantia";
+        // Tabla derivada que agrega el saldo de garantía por conductor en una sola pasada.
+        // Reemplaza la subquery correlacionada que ejecutaba una query por fila de conductor.
+        $guaranteeJoin = "(SELECT driver_id, SUM(amount) AS saldo_garantia
+                           FROM wallet_movements
+                           WHERE wallet_type = 'guarantee'
+                           GROUP BY driver_id) wm_agg";
 
         if ($userData['role'] === 'client_admin') {
             $clientModel = new ClientModel();
             $client      = $clientModel->where('user_id', $userData['id'])->first();
             $billing     = $billingModel->getByClient($client['id']);
 
-            $drivers = $driverModel->select("drivers.*, users.name, users.email, $guaranteeSubquery")
-                                   ->join('users', 'users.id = drivers.user_id')
-                                   ->where('drivers.client_id', $client['id'])
-                                   ->findAll();
+            $drivers = $db->table('drivers')
+                ->select('drivers.*, users.name, users.email, COALESCE(wm_agg.saldo_garantia, 0) AS saldo_garantia')
+                ->join('users', 'users.id = drivers.user_id')
+                ->join($guaranteeJoin, 'wm_agg.driver_id = drivers.id', 'left')
+                ->where('drivers.client_id', $client['id'])
+                ->get()
+                ->getResultArray();
 
             $drivers = $this->enrichDrivers($drivers, $billing);
         } else {
@@ -48,10 +53,13 @@ class DriverController extends BaseController
                 $allBillings[$b['client_id']] = $b;
             }
 
-            $drivers = $driverModel->select("drivers.*, users.name, users.email, clients.business_name, $guaranteeSubquery")
-                                   ->join('users', 'users.id = drivers.user_id')
-                                   ->join('clients', 'clients.id = drivers.client_id')
-                                   ->findAll();
+            $drivers = $db->table('drivers')
+                ->select('drivers.*, users.name, users.email, clients.business_name, COALESCE(wm_agg.saldo_garantia, 0) AS saldo_garantia')
+                ->join('users', 'users.id = drivers.user_id')
+                ->join('clients', 'clients.id = drivers.client_id')
+                ->join($guaranteeJoin, 'wm_agg.driver_id = drivers.id', 'left')
+                ->get()
+                ->getResultArray();
 
             $drivers = $this->enrichDrivers($drivers, null, $allBillings);
         }

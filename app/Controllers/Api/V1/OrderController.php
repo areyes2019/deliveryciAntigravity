@@ -38,7 +38,9 @@ class OrderController extends BaseController
         $orderModel = new \App\Models\OrderModel();
 
         if ($userData['role'] === 'superadmin') {
-            $orders = $orderModel->findAll();
+            $orders = $orderModel
+                ->whereIn('status', ['pendiente', 'publicado', 'tomado', 'arribado', 'en_camino', 'arribado_a_entrega'])
+                ->findAll();
         } else if ($userData['role'] === 'client_admin') {
             $clientModel = new ClientModel();
             $client = $clientModel->where('user_id', $userData['id'])->first();
