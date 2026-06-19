@@ -280,8 +280,8 @@ const handleSelectOrder = async (order) => {
 }
 
 // Ejecutado cuando el usuario confirma la cancelación desde el OrderDetailPanel.
-// Delega toda la lógica al composable (llamada API, toast de confirmación, etc.).
-const handleCancelOrder = async () => { await cancelOrder({ showToast, clearSelection, fetchDashboardData }) }
+// No se pasa fetchDashboardData: el evento Pusher 'order-cancelled' actualiza el estado local.
+const handleCancelOrder = async () => { await cancelOrder({ showToast, clearSelection }) }
 
 // Ejecutado cuando el usuario hace clic en un conductor en el FleetSidebar.
 // Centra y hace zoom en la posición del conductor en el mapa.
@@ -333,12 +333,17 @@ onMounted(async () => {
         clientId,
 
         // Evento: un pedido pendiente fue publicado y ya está disponible para conductores.
-        // Optimización: si el pedido ya estaba en memoria, actualizamos solo su status
-        // sin hacer un refetch completo (menos carga de red).
-        // Si no estaba (pedido creado desde otro dispositivo), sí hacemos refetch.
+        // Pusher puede llegar antes que la respuesta HTTP del POST /orders (race condition):
+        // publishDueOrders() dispara el evento dentro del create() antes de responder al cliente.
+        // Se espera 500ms para dar tiempo a onOrderCreated a añadir la orden al array local.
+        // Si después de la espera sigue sin estar, se hace refetch (pedido creado desde otro dispositivo).
         onNewTrip: async (data) => {
           if (data?.trip_id) {
-            const idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
+            let idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
+            if (idx === -1) {
+              await new Promise(r => setTimeout(r, 500))
+              idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
+            }
             if (idx !== -1) {
               orders.value[idx] = { ...orders.value[idx], status: 'publicado' }
             } else {

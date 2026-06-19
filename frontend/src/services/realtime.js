@@ -65,3 +65,22 @@ export function disconnectRealtime() {
         instance = null
     }
 }
+
+/**
+ * Devuelve true si la conexión WebSocket con Pusher está activa ahora mismo.
+ */
+export function isRealtimeConnected() {
+    if (!instance) return false
+    return instance.connection.state === 'connected'
+}
+
+/**
+ * Llama a callback(state) cada vez que cambia el estado de la conexión Pusher.
+ * Retorna una función para cancelar la suscripción.
+ */
+export function onConnectionStateChange(callback) {
+    const pusher = getInstance()
+    const handler = (states) => callback(states.current)
+    pusher.connection.bind('state_change', handler)
+    return () => pusher.connection.unbind('state_change', handler)
+}

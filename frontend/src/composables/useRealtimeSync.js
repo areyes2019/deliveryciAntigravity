@@ -1,6 +1,6 @@
 import { ref, onUnmounted } from 'vue'
 import api from '../api'
-import { subscribe, unsubscribe } from '../services/realtime'
+import { subscribe, unsubscribe, isRealtimeConnected, onConnectionStateChange } from '../services/realtime'
 
 const POLLING_INTERVAL_MS = 30_000
 
@@ -8,22 +8,22 @@ export function useRealtimeSync() {
   const refreshInterval = ref(null)
 
   const startPolling = ({ role, orders, drivers, stats, showToast, updateMapMarkers }) => {
+
+    // Sincronización silenciosa: reemplaza el estado local con datos frescos del servidor.
+    // Solo corre cuando Pusher está desconectado — actúa como red de seguridad, no como
+    // mecanismo principal. Preserva coordenadas GPS recientes de Pusher para evitar
+    // que el polling sobreescriba una posición más nueva ya recibida por WebSocket.
     const silentUpdate = async () => {
-      // Orders y drivers se actualizan de forma independiente para que un fallo
-      // en uno no bloquee la actualización del otro.
       try {
         const ordersRes = await api.get('/orders')
         if (ordersRes.data.status) {
           const newOrders = ordersRes.data.data
-
-          // Detectar cambios en pedidos
           newOrders.forEach(newOrder => {
             const old = orders.value.find(o => o.id === newOrder.id)
             if (old && old.status !== newOrder.status) {
               showToast(`📦 Pedido #${newOrder.id} cambió a: ${newOrder.status}`, 'info')
             }
           })
-
           orders.value = newOrders
           stats.value.activeOrders = orders.value.filter(o =>
             ['publicado', 'tomado', 'arribado', 'en_camino'].includes(o.status)
@@ -41,8 +41,7 @@ export function useRealtimeSync() {
             const idx = drivers.value.findIndex(d => d.id === fresh.id)
             if (idx !== -1) {
               const existing = drivers.value[idx]
-              // Si Pusher actualizó este conductor en los últimos 10 s,
-              // conservar sus coordenadas en tiempo real en lugar de las de la DB.
+              // Conservar coordenadas GPS si Pusher las actualizó en los últimos 10s
               const pusherIsRecent = existing._pusherTs &&
                 (Date.now() - existing._pusherTs) < 10_000
               drivers.value[idx] = {
@@ -64,19 +63,40 @@ export function useRealtimeSync() {
       if (updateMapMarkers) updateMapMarkers()
     }
 
-    // Polling como fallback de recuperación — Pusher es la fuente primaria
-    refreshInterval.value = setInterval(() => {
-      if (role.value === 'client_admin') {
-        silentUpdate()
-      }
-    }, POLLING_INTERVAL_MS)
+    const startInterval = () => {
+      if (refreshInterval.value) return
+      refreshInterval.value = setInterval(() => {
+        if (role.value === 'client_admin') silentUpdate()
+      }, POLLING_INTERVAL_MS)
+    }
 
-    // Limpiar al desmontar
-    onUnmounted(() => {
+    const stopInterval = () => {
       if (refreshInterval.value) {
         clearInterval(refreshInterval.value)
         refreshInterval.value = null
       }
+    }
+
+    // Al montar: si Pusher no está conectado todavía, arrancar polling de inmediato
+    if (!isRealtimeConnected()) {
+      startInterval()
+    }
+
+    // Reaccionar a cambios de estado de la conexión Pusher
+    const unbindState = onConnectionStateChange((state) => {
+      if (state === 'connected') {
+        // Pusher recuperó conexión: sincronizar una vez y detener el polling
+        if (role.value === 'client_admin') silentUpdate()
+        stopInterval()
+      } else if (state === 'disconnected' || state === 'unavailable') {
+        // Pusher perdió conexión: activar polling como fallback
+        startInterval()
+      }
+    })
+
+    onUnmounted(() => {
+      stopInterval()
+      unbindState()
     })
 
     return { silentUpdate }
@@ -113,7 +133,6 @@ export function useRealtimeSync() {
       })
     }
 
-    // Limpiar listeners al desmontar
     onUnmounted(() => {
       unsubscribe(`orders.${clientId}`)
       unsubscribe(`trips.${clientId}`)
