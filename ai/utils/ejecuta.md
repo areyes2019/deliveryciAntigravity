@@ -1,8 +1,11 @@
 Actúa como Arquitecto Senior del proyecto Delivery.
 
 Lee completamente:
-
-ai\promps\auditoria\fase_1_frontend_handlers.md
+ai\promps\auditoria\fase_2_backend_queries.md
+ai\promps\auditoria\fase_3_gps_writes.md
+ai\promps\auditoria\fase_4_pusher_batch.md
+ai\promps\auditoria\fase_5_redis_cache.md
+ai\promps\auditoria\fase_6_polling_fallback.md
 
 Antes de modificar código:
 
