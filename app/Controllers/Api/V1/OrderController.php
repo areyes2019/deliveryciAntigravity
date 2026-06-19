@@ -157,10 +157,15 @@ class OrderController extends BaseController
             }
 
             // Notificar al panel de órdenes del cliente
+            // new_balance permite que el frontend actualice el saldo sin un /auth/me adicional
+            $freshClient = $clientModel->find($clientId);
             PusherService::trigger(
                 'orders.' . $clientId,
                 'order-cancelled',
-                ['order_id' => (int) $id]
+                [
+                    'order_id'    => (int) $id,
+                    'new_balance' => (float) ($freshClient['credits_balance'] ?? 0),
+                ]
             );
 
             return $this->respondSuccess($result['message']);

@@ -202,79 +202,38 @@ const countActive = () => orders.value.filter(o => activeStatuses.includes(o.sta
 // CARGA INICIAL DE DATOS
 // ─────────────────────────────────────────────────────────────────────────────
 
-// Función principal que obtiene todos los datos del dashboard desde la API.
-// La lógica se bifurca según el rol porque cada rol necesita datos diferentes:
-//   - 'superadmin':   ve TODOS los clientes de la plataforma y su balance global
-//   - 'client_admin': ve solo SU flota, SUS geofences y SU saldo personal
-// Refresco ligero para handlers de eventos Pusher: solo orders + drivers en paralelo.
-// No toca geofences ni auth/me (no cambian con los viajes), reduciendo el tiempo
-// de ~1.2s a ~250ms por evento de estado.
-const refreshTripsAndDrivers = async () => {
-  try {
-    const [ordersRes, driversRes] = await Promise.all([
-      api.get('/orders'),
-      api.get('/drivers')
-    ])
-    if (ordersRes.data.status) {
-      orders.value = ordersRes.data.data
-      stats.value.activeOrders = countActive()
-    }
-    if (driversRes.data.status) {
-      const freshDrivers = driversRes.data.data
-      freshDrivers.forEach(fresh => {
-        const idx = drivers.value.findIndex(d => d.id === fresh.id)
-        if (idx !== -1) {
-          const existing = drivers.value[idx]
-          const pusherIsRecent = existing._pusherTs && (Date.now() - existing._pusherTs) < 10_000
-          drivers.value[idx] = {
-            ...fresh,
-            current_lat: pusherIsRecent ? existing.current_lat : fresh.current_lat,
-            current_lng: pusherIsRecent ? existing.current_lng : fresh.current_lng,
-            _pusherTs: existing._pusherTs ?? null,
-          }
-        } else {
-          drivers.value.push(fresh)
-        }
-      })
-      drivers.value = drivers.value.filter(d => freshDrivers.some(f => f.id === d.id))
-    }
-  } catch (e) {
-    console.error('[refreshTripsAndDrivers]', e)
-  }
-}
-
 const fetchDashboardData = async () => {
   loading.value = true
   try {
-    // Todos los roles cargan sus pedidos como primer paso
-    const ordersRes = await api.get('/orders')
-    if (ordersRes.data.status) { orders.value = ordersRes.data.data; stats.value.activeOrders = countActive() }
-
     if (role.value === 'superadmin') {
-      // Superadmin: carga la lista completa de clientes y suma sus saldos para el KPI global
-      const clientsRes = await api.get('/clients')
-      stats.value.totalClients = clientsRes.data.data.length
-      stats.value.balance = clientsRes.data.data.reduce((a, c) => a + (parseFloat(c.credits_balance) || 0), 0)
+      // Superadmin: orders y clients son independientes — se lanzan en paralelo
+      const [ordersRes, clientsRes] = await Promise.all([
+        api.get('/orders'),
+        api.get('/clients'),
+      ])
+      if (ordersRes.data.status) { orders.value = ordersRes.data.data; stats.value.activeOrders = countActive() }
+      if (clientsRes.data.status) {
+        stats.value.totalClients = clientsRes.data.data.length
+        stats.value.balance = clientsRes.data.data.reduce((a, c) => a + (parseFloat(c.credits_balance) || 0), 0)
+      }
 
     } else if (role.value === 'client_admin') {
-      // Client_admin: carga conductores y geofences EN PARALELO con Promise.all.
-      // Lanzar ambas peticiones simultáneamente reduce el tiempo de espera total
-      // (si cada una tarda 200ms, en paralelo tardan ~200ms, no ~400ms).
-      const [driversRes, geofencesRes] = await Promise.all([api.get('/drivers'), api.get('/geofences')])
-      drivers.value = driversRes.data.data
-      stats.value.totalDrivers = drivers.value.length
-      // Suma los saldos de todos los conductores de la flota para el KPI 'fleetBalance'
-      stats.value.fleetBalance = drivers.value.reduce((a, d) => a + (parseFloat(d.balance) || 0), 0)
-      // El operador `?? []` (nullish coalescing) usa [] si la propiedad es null/undefined
+      // Client_admin: las 4 llamadas son independientes entre sí — se lanzan todas en paralelo
+      const [ordersRes, driversRes, geofencesRes, meRes] = await Promise.all([
+        api.get('/orders'),
+        api.get('/drivers'),
+        api.get('/geofences'),
+        api.get('/auth/me'),
+      ])
+      if (ordersRes.data.status) { orders.value = ordersRes.data.data; stats.value.activeOrders = countActive() }
+      if (driversRes.data.status) {
+        drivers.value = driversRes.data.data
+        stats.value.totalDrivers = drivers.value.length
+        stats.value.fleetBalance = drivers.value.reduce((a, d) => a + (parseFloat(d.balance) || 0), 0)
+      }
       clientZones.value = geofencesRes.data?.data ?? []
-
-      // Carga el saldo de créditos del operador autenticado
-      const meRes = await api.get('/auth/me')
       stats.value.balance = parseFloat(meRes.data.data.client_balance) || 0
 
-      // Si el mapa ya está visible (showFeed=false), inicializarlo/actualizarlo.
-      // El setTimeout(800ms) garantiza que Google Maps tenga el div ya renderizado
-      // y con dimensiones reales antes de intentar dibujarse.
       if (viewMode.value === 'map' && !showFeed.value) {
         await nextTick()
         setTimeout(() => initDashboardMap({ orders: orders.value, drivers: drivers.value, isDriverEnRoute: d => isDriverEnRoute(d, orders.value) }), 800)
@@ -392,43 +351,43 @@ onMounted(async () => {
         },
 
         // Evento: un conductor aceptó un pedido.
-        // Actualización optimista: cambia el estado a 'tomado' de inmediato para que
-        // la tarjeta aparezca en el ActivityFeed sin esperar el refetch completo.
-        // El refetch posterior trae el driver_id y demás detalles del conductor.
-        onTripTaken: async (data) => {
+        // El payload incluye driver_id — se aplica directamente sin refetch.
+        onTripTaken: (data) => {
           if (data?.trip_id) {
             const idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
             if (idx !== -1) {
-              orders.value[idx] = { ...orders.value[idx], status: 'tomado' }
+              orders.value[idx] = {
+                ...orders.value[idx],
+                status: 'tomado',
+                ...(data.driver_id && { driver_id: data.driver_id }),
+              }
               stats.value.activeOrders = countActive()
             }
           }
-          await refreshTripsAndDrivers()
           updateMapMarkers(mapCtx())
         },
 
-        // Evento: el status de un pedido cambió durante el viaje
-        // (ej: conductor marcó que recogió el paquete → 'en_camino').
-        // Actualización optimista: cambia el status localmente de inmediato;
-        // el refetch posterior trae los timestamps y datos completos.
-        onTripUpdated: async (data) => {
+        // Evento: el status de un pedido cambió durante el viaje.
+        // El payload incluye trip_id y status — se aplica directamente sin refetch.
+        onTripUpdated: (data) => {
           if (data?.trip_id && data?.status) {
             const idx = orders.value.findIndex(o => String(o.id) === String(data.trip_id))
             if (idx !== -1) {
               orders.value[idx] = { ...orders.value[idx], status: data.status }
               stats.value.activeOrders = countActive()
+              showToast(`Pedido #${data.trip_id} → ${data.status}`, 'info')
             }
           }
-          await refreshTripsAndDrivers()
           updateMapMarkers(mapCtx())
         },
 
         // Evento: un pedido fue cancelado.
-        // Si el operador tenía ese pedido abierto en el panel de detalle,
-        // lo cerramos para no mostrar información de un pedido ya inexistente.
-        onOrderCancelled: async ({ order_id }) => {
+        // Mutación local: se elimina del array y el saldo se actualiza desde el payload.
+        onOrderCancelled: ({ order_id, new_balance }) => {
           if (selectedOrder.value?.id === order_id) clearSelection()
-          await fetchDashboardData()
+          orders.value = orders.value.filter(o => String(o.id) !== String(order_id))
+          stats.value.activeOrders = countActive()
+          if (new_balance !== undefined) stats.value.balance = new_balance
           updateMapMarkers(mapCtx())
         },
 

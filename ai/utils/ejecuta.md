@@ -2,7 +2,7 @@ Actúa como Arquitecto Senior del proyecto Delivery.
 
 Lee completamente:
 
-ai\promps\auditoria\fase_0_config.md
+ai\promps\auditoria\fase_1_frontend_handlers.md
 
 Antes de modificar código:
 
