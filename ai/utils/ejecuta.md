@@ -2,7 +2,7 @@ Actúa como Arquitecto Senior del proyecto Delivery.
 
 Lee completamente:
 
-ai\promps\pusher_solve\04-opcional-trigger-ubicacion.md
+ai\promps\auditoria\fase_0_config.md
 
 Antes de modificar código:
 
@@ -25,7 +25,7 @@ IMPORTANTE:
 
 Implementar exclusivamente lo definido en el spec.
 
-Implementar siembra con base a criticador.md
+Implementar siempre con base a global_criticador.md
 
 No realizar mejoras no solicitadas.
 No refactorizar áreas fuera del alcance.

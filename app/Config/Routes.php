@@ -8,9 +8,9 @@ use CodeIgniter\Router\RouteCollection;
 $routes->get('/', 'Home::index');
 
 // ─────────────────────────────────────────────────────────────────────────────
-// API v1 — todas las rutas protegidas con corsFilter
+// API v1 — CORS manejado globalmente por el filtro nativo de CI4 (Filters.php)
 // ─────────────────────────────────────────────────────────────────────────────
-$routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1', 'filter' => 'corsFilter'], static function($routes) {
+$routes->group('api/v1', ['namespace' => 'App\Controllers\Api\V1'], static function($routes) {
     $routes->post('auth/login', 'Auth::login');
     $routes->get('auth/me', 'Auth::me', ['filter' => 'jwt']);
 

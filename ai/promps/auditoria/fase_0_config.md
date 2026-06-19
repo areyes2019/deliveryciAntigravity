@@ -80,14 +80,28 @@ configurado — en ese caso revertir este cambio y diagnosticar `app/Config/Cors
 
 ---
 
-## Tarea 0.3 — Confirmar que sesiones de archivo no se inician en requests de API
+## ~~Tarea 0.3 — Confirmar que sesiones de archivo no se inician en requests de API~~ ✓ CERRADA SIN CAMBIO
 
-### Contexto
+### Resultado del diagnóstico
+
+Grep ejecutado sobre todo `app/**/*.php` buscando `session()`, `$session`, `service('session')`,
+`session_start`. Resultado: **únicamente dos hits, ambos son comentarios** en
+`BaseController.php` líneas 28 y 43:
+
+```php
+// protected $session;
+// $this->session = service('session');
+```
+
+CI4 no inicializa el sistema de sesiones en ningún request de la API. El driver
+`FileHandler` configurado en `Session.php` nunca se invoca. No hay I/O de disco por sesiones.
+
+**Ningún cambio necesario en `Session.php` ni en `BaseController.php`.**
+
+### Contexto original (para referencia)
 
 `app/Config/Session.php:25` usa `FileHandler`. Este sistema es una API REST pura con
 autenticación JWT. Las sesiones de CI4 no deberían iniciarse en ningún request de la API.
-
-Esta tarea es de **diagnóstico primero, cambio solo si se confirma el problema**.
 
 ### Paso 1 — Diagnosticar
 
@@ -140,10 +154,9 @@ Todos los siguientes puntos deben cumplirse antes de cerrar esta fase:
 - [x] `CI_ENVIRONMENT = production` en el `.env` remoto (ya estaba aplicado)
 - [ ] Confirmar que requests de API en producción no generan cabeceras de debug toolbar
 - [ ] Confirmar que el log solo registra eventos de nivel 4+ en producción
-- [ ] Un preflight OPTIONS a cualquier endpoint de `api/v1` responde con headers CORS correctos
-- [ ] No hay doble procesamiento CORS (verificable con un solo filtro activo)
-- [ ] Directorio `writable/session/` no recibe archivos nuevos durante uso normal de la API
-  (o se confirma que la sesión nunca se inicia y la tarea 0.3 se cierra sin cambio)
+- [x] `Routes.php:13` — `'filter' => 'corsFilter'` eliminado del grupo `api/v1`
+- [ ] Verificar con curl OPTIONS que preflight sigue respondiendo correctamente
+- [x] Sesiones — diagnóstico confirma que nunca se inician; tarea cerrada sin cambio
 
 ---
 
